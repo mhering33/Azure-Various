@@ -1,0 +1,245 @@
+#!groovy
+def gitSettings = [ defaultGitUserCredID: 'git-user',
+                    defaultGitBranch: 'develop',
+                    defaultGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms.git',
+                    pipelineGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms-deploy.git',
+                    pipelineGitBranch: 'master']
+def slackSettings = [ enableSlackNotification: true,
+                      slackTokenID: 'slacktoken_operations',
+                      slackChannel: 'fiskars_jenkins',
+                      slackBaseURL: 'https://ibm-ecxio.slack.com/services/hooks/jenkins-ci/',
+                      teamDomain: 'ibm-ecxio',
+                      isBotUser: false,
+                      errorRecipients: '<@christian.schimanski><@silvio.papac>']
+def globalSettings = [  userInputTimeout: 260000,
+                        extendedMessageInfo: '']
+def projectSettings = [ sourcecodeFolder: '',
+                        brands: [
+                          [ name: 'Fiskars',
+                            gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-fiskars-cms.git',
+                            branch: 'develop'
+                          ],
+                          [ name: 'Gerber',
+                            gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-gerber-cms.git',
+                            branch: 'develop'
+                          ]
+                        ]]
+
+def lib = library('helper').io.ecx
+def ecxHelper = lib.ECXHelperWindows.new(this)
+def errors = lib.errors.ErrorHandler.new(this)
+def errorMessage = ''
+def jsonData = ''
+def nodeNames = ["master"]
+
+try
+{
+  stage('Interaction')
+  {
+    env.STAGE_NAME = 'Interaction'
+    node('master')
+    {
+      try
+      {
+        wrap([$class: 'BuildUser'])
+        {
+          env.userFullName = "${BUILD_USER}"
+        }
+      }
+      catch (Exception ex)
+      {
+        env.userFullName = "Jenkins"
+      }
+      if (slackSettings.enableSlackNotification)
+      {
+        slackSend teamDomain: "${slackSettings.teamDomain}", botUser: slackSettings.isBotUser, tokenCredentialId: "${slackSettings.slackTokenID}", channel: "${slackSettings.slackChannel}", message: "Started ${env.JOB_NAME} ${env.BUILD_DISPLAY_NAME} by ${env.userFullName}"
+      }
+
+      startMillis = System.currentTimeMillis()
+
+      try
+      {
+        timeout(time: globalSettings.userInputTimeout, unit: 'MILLISECONDS')
+        {
+          def brandChoicesList = []
+          projectSettings.brands.each { brand ->
+            brandChoicesList << booleanParam(defaultValue: true, name: "${brand.name}")
+          }
+          userInputBrand = input(
+                  message: 'Which BRAND should be deployed for Test?',
+                  id: 'userInputBrand',
+                  parameters: brandChoicesList)
+
+          def coreChoiceList = []
+          coreChoiceList << "Yes"
+          coreChoiceList << "No"
+
+          userInputCore = input(
+                  message: 'Should Core be deployed aswell for Test?',
+                  id: 'userInputCore',
+                  parameters: [
+                  [$class: 'ChoiceParameterDefinition', choices: coreChoiceList, description: 'Deploy Core', name: 'Core']
+          ])
+          if (userInputCore == "Yes") {
+            def lastUsedBranch = "${gitSettings.defaultGitBranch}"
+            def  file_is_here = fileExists "${env.WORKSPACE}/../last_used_inputbranch_Core_${env.JOB_NAME}.txt"
+            if(file_is_here)
+            {
+              lastUsedBranch = readFile "${env.WORKSPACE}/../last_used_inputbranch_Core_${JOB_NAME}.txt"
+            }
+            userInputBranchCore = input(
+                    id: 'userInputBranchCore',
+                    message: "Please enter Branch Name to deploy from for CORE",
+                    parameters: [
+                            string(defaultValue: "${lastUsedBranch}", description: "eg: \"feature/xyz\" or \"hotfix/bla\" or simply \"develop\" branch", name: 'userInputBranchCore', trim: true)
+                    ])
+            if (!userInputBranchCore.matches("^release\\/release[0-9\\.]{2,}|hotfix\\/hotfix[0-9\\.]{2,}|develop|feature\\/FCMS-[0-9]{1,}|bugfix\\/WCMS-[0-9]{1,}")) {
+              error('error_illegal_version')
+            }
+            fileOperations([fileCreateOperation(fileContent: "${userInputBranchCore}", fileName: "../last_used_inputbranch_Core_${JOB_NAME}.txt")])
+          }
+
+          projectSettings.brands.each { brand ->
+            if (userInputBrand["${brand.name}"] == true) {
+              def lastUsedBranch = "${gitSettings.defaultGitBranch}"
+              def  file_is_here = fileExists "${env.WORKSPACE}/../last_used_inputbranch_${brand.name}_${env.JOB_NAME}.txt"
+              if(file_is_here)
+              {
+                lastUsedBranch = readFile "${env.WORKSPACE}/../last_used_inputbranch_${brand.name}_${JOB_NAME}.txt"
+              }
+              userInputBranch = input(
+                      id: "userInputBranch${brand.name}",
+                      message: "Please enter Branch Name to deploy from for BRAND: ${brand.name}",
+                      parameters: [
+                              string(defaultValue: "${lastUsedBranch}", description: "eg: \"feature/xyz\" or \"hotfix/bla\" or simply \"develop\" branch", name: 'userInputBranch', trim: true)
+                      ])
+              if (!userInputBranch.matches("^release\\/release[0-9\\.]{2,}|hotfix\\/hotfix[0-9\\.]{2,}|develop|feature\\/FCMS-[0-9]{1,}|bugfix\\/WCMS-[0-9]{1,}")) {
+                error('error_illegal_version')
+              }
+              brand.branch = userInputBranch
+              fileOperations([fileCreateOperation(fileContent: "${userInputBranch}", fileName: "../last_used_inputbranch_${brand.name}_${JOB_NAME}.txt")])
+            }
+          }
+        }
+      }
+      catch (Exception exception)
+      {
+        endMillis = System.currentTimeMillis()
+        if (endMillis - startMillis >= globalSettings.userInputTimeout)
+        {
+          error('error_input_timeout')
+        }
+        throw exception
+      }
+    }
+  }
+
+  stage('Clean & Init')
+  {
+    env.STAGE_NAME = 'Clean & Init'
+    node('master')
+    {
+      ecxHelper.cleanUp()
+      dir('pipeline')
+      {
+        git branch: "master", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+        load "tools.groovy"
+      }
+    }
+  }
+
+  stage('Build and Copy')
+  {
+    env.STAGE_NAME = 'Build and Copy'
+    def branches = [:]
+    projectSettings.brands.each
+    { brand ->
+      def brandNameVar = brand.name
+      if(userInputBrand["${brandNameVar}"] == true)
+      {
+        def brandGitRepoVar = brand.gitRepo
+        branches["Frontend ${brandNameVar}"] =
+        {
+          node("master")
+          {
+            dir('pipeline')
+            {
+              git branch: "${gitSettings.pipelineGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+              load "tools.groovy"
+            }
+            def sourcecodeCore = ''
+            dir('sourcecode')
+            {
+              sourcecodeCore = ecxHelper.getCurrentDirectory()
+              git branch: "${userInputBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.defaultGitRepo}"
+              jsonData = readJSON file: "sc/src/Project/Core/build-config.json"
+            }
+            dir("sourcecode_${brandNameVar}")
+            {
+              git branch: "${userInputBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${brandGitRepoVar}"
+            }
+            dir("sourcecode_${brandNameVar}/sc")
+            {
+              ecxHelper.mavenCommand("clean test -P htmlpreview -DcoreProjectPath=${sourcecodeCore}")
+
+            }
+            dir("sourcecode_${brandNameVar}/sc/htmldummy")
+            {
+              stash includes: "**/**", name: "stashFrontendFiles_${brandNameVar}"
+            }
+          }
+          node("master")
+          {
+            dir("/var/www/html/tests/brands/${brandNameVar}")
+            {
+              unstash "stashFrontendFiles_${brandNameVar}"
+            }
+          }
+        }
+      }
+    }
+    parallel branches
+  }
+
+  stage('Core')
+  {
+    env.STAGE_NAME = 'Core'
+    node("master")
+    {
+      if(userInputCore == "Yes")
+      {
+        dir('sourcecode')
+        {
+          git branch: "${userInputBranchCore}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.defaultGitRepo}"
+          projectSettings.sourcecodeFolder = ecxHelper.getCurrentDirectory()
+          jsonData = readJSON file: "sc/src/Project/Core/build-config.json"
+        }
+        dir("sourcecode/sc")
+        {
+          ecxHelper.mavenCommand("clean test -P htmlpreview")
+        }
+        dir("sourcecode/sc/htmldummy")
+        {
+          stash includes: "**/**", name: 'stash_core'
+        }
+        dir('/var/www/html/tests/Core')
+        {
+          unstash 'stash_core'
+        }
+      }
+    }
+  }
+}
+catch (Exception exception)
+{
+  errorMessage = exception.getMessage()
+  errorMessage = "${slackSettings.errorRecipients}\n${errorMessage}"
+  errors.defaultHandler(exception, slackSettings)
+}
+finally
+{
+  stage('Finalisation')
+  {
+    ecxHelper.defaultFinalisation(nodeNames, errorMessage, slackSettings)
+  }
+}

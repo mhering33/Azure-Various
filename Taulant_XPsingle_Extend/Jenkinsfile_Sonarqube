@@ -1,0 +1,177 @@
+#!groovy
+def nexusSettings = [ nexusGroupID: 'FISKARS',
+                      repositoryUrl: '/content/repositories/Releases/',
+                      nexusArtifacts: [
+                              core: [
+                                      name: 'Core',
+                              ],
+                              brand_fiskars: [
+                                      name: 'Brand Fiskars',
+                              ]
+                      ],
+                      nexusBaseUrl: 'http://192.168.12.14:8081/nexus']
+def gitSettings = [ defaultGitUserCredID: 'git-user',
+                    defaultGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms.git',
+                    pipelineGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-deploy-cms.git'
+]
+def sonarSettings = [ sonarMsBuildPath: 'D:\\Deployment\\sonar-scanner-msbuild-4.3.1.1372-net46\\SonarScanner.MSBuild.exe',
+                      sonarHostUrl: 'http://10.0.12.141:8080',
+                      sonarProjectKey: 'FISKARSCMS',
+                      sonarProjectName: 'Fiskars CMS']
+def slackSettings = [ enableSlackNotification: true,
+                      slackTokenID: 'slacktoken_Fiskars',
+                      slackChannel: 'fiskars_jenkins',
+                      slackBaseURL: 'https://ibm-ecxio.slack.com/services/hooks/jenkins-ci/',
+                      teamDomain: 'ibm-ecxio',
+                      isBotUser: false,
+                      errorRecipients: '@here']
+def msbuildSettings = [ nugetPath: 'C:\\tools\\nuget.exe',
+                        codeCoverageBuildPath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\TestAgent\\Team Tools\\Dynamic Code Coverage Tools\\CodeCoverage.exe',
+                        msbuildPath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\BuildTools\\MSBuild\\15.0\\Bin\\msbuild.exe',
+                        mstestConsolePath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\TestAgent\\Common7\\IDE\\CommonExtensions\\Microsoft\\TestWindow\\vstest.console.exe',
+                        vsToolsPath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\BuildTools\\MSBuild\\Microsoft\\VisualStudio\\v15.0']
+def globalSettings = [  userInputTimeout: 260000,
+                        extendedMessageInfo: '']
+def projectSettings = [ sourcecodeFolder: '',
+                        buildServerNode: 'BUILD DEV',
+                        pubxml: 'D:\\Deployment\\DEV\\DevProfile.pubxml',
+                        websiteconfigfolder: 'D:\\Deployment\\DEV\\fiskars.dev.sc.configs',
+                        iisWebsitename: 'fiskars.dev.sc',
+                        iisWebsitenameXconnect: 'fiskars.dev.xconnect',
+                        iisWebsitenameidentity: 'fiskars.dev.identityserver',
+                        targetIISWebsitefolder: 'C:\\inetpub\\wwwroot\\fiskars.dev.sc',
+                        targetIISWebsitefolderXconnect: 'C:\\inetpub\\wwwroot\\fiskars.dev.xconnect',
+                        websiteBaselinefolder: 'D:\\Deployment\\DEV\\fiskars.dev.sc.baseline',
+                        websiteBaselinefolderXconnect: 'D:\\Deployment\\DEV\\fiskars.dev.xconnect.baseline',
+                        xconnectAutomationServiceName: 'fiskars.dev.xconnect-MarketingAutomationService',
+                        xconnectIndexingWorkerServiceName: 'fiskars.dev.xconnect-IndexWorker',
+                        xconnectProcessingEngineServiceName: 'fiskars.dev.xconnect-ProcessingEngineService',
+                        solrServiceName: 'solr721',
+                        sqlServer: [
+                                hostname: '(local)',
+                                dbuser: 'sa',
+                                dbpasswd: 'zk2EZF4kLLqCImjBlGjT',
+                                backupFilePathCore: 'D:\\Deployment\\DEV\\fiskars.dev_Core.baseline.bak',
+                                backupDbNameCore: 'fiskars.dev_Core',
+                                backupFilePathMaster: 'D:\\Deployment\\DEV\\fiskars.dev_Master.baseline.bak',
+                                backupDbNameMaster: 'fiskars.dev_Master'
+                        ],
+                        brands: [
+                                [ name: 'Fiskars',
+                                  gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-fiskars-cms.git']
+                        ]
+]
+
+def lib = library('helper').io.ecx
+def ecxHelper = lib.ECXHelperWindows.new(this)
+def errors = lib.errors.ErrorHandler.new(this)
+def parser = lib.utils.ParseUtils.new(this)
+def sonarUtils = lib.utils.sonar.SonarUtils.new(this)
+def errorMessage = ''
+def jsonData = ''
+env.BRANCH_NAME = "develop"
+
+def nodeNames = ["master","${projectSettings.buildServerNode}"]
+
+try
+{
+  stage('Clean & Init')
+  {
+    env.STAGE_NAME = 'Clean & Init'
+    node('master')
+    {
+      try
+      {
+        wrap([$class: 'BuildUser'])
+        {
+          env.userFullName = "${BUILD_USER}"
+        }
+      }
+      catch (Exception ex)
+      {
+        env.userFullName = "Jenkins"
+      }
+      //if (slackSettings.enableSlackNotification)
+      //{
+      //  slackSend teamDomain: "${slackSettings.teamDomain}", botUser: slackSettings.isBotUser, tokenCredentialId: "${slackSettings.slackTokenID}", channel: "${slackSettings.slackChannel}", message: "${env.JOB_NAME}: started by user: ${env.userFullName}\n (<${env.RUN_DISPLAY_URL}|Open>)"
+      //}
+    }
+    def branches = [:]
+    nodeNames.each { nodeName ->
+      def nodeNameVar = nodeName
+      branches["${nodeNameVar}"] =
+      {
+        node("${nodeNameVar}")
+        {
+          ecxHelper.cleanUp()
+          if (nodeNameVar.equals("master"))
+          {
+            dir('pipeline')
+            {
+              git branch: "master", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+            }
+          }
+          else
+          {
+            dir('pipeline')
+            {
+              git branch: "master", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+            }
+            git branch: "${env.BRANCH_NAME}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.defaultGitRepo}"
+			projectSettings.sourcecodeFolder  = ecxHelper.getCurrentDirectory()
+          }
+        }
+      }
+    }
+    parallel branches
+  }
+
+  stage('SonarQube analysis')
+  {
+    node ("${projectSettings.buildServerNode}")
+    {
+      withSonarQubeEnv('ecxsonar')
+      {
+		echo "====== Checking ${env.BRANCH_NAME} ======"
+        dir("${projectSettings.sourcecodeFolder}\\sc")
+        {
+          def status = 0
+          status += ecxHelper.nugetRestoreMsbuild("${msbuildSettings.msbuildPath}", "Fiskars.Core.sln", "NuGet.config")
+          status += ecxHelper.msbuildSolution("${msbuildSettings.msbuildPath}", "Fiskars.Core.sln", "${projectSettings.pubxml}", "Debug", "${projectSettings.sourcecodeFolder}\\sc\\output", "${msbuildSettings.vsToolsPath}")
+          if (status != 0)
+          {
+            throw new Exception()
+          }
+          def solutionFileContentString = readFile 'Fiskars.Core.sln'
+          def mstest_list_string = parser.getTestProjectsFromSolutionFile("${solutionFileContentString}", "bin\\Debug\\")
+          status += sonarUtils.startScan("${sonarSettings.sonarMsBuildPath}", "${msbuildSettings.msbuildPath}", "${msbuildSettings.mstestConsolePath}", "${msbuildSettings.codeCoverageBuildPath}", "${mstest_list_string}", "${projectSettings.sourcecodeFolder}\\sc", "Debug", "${sonarSettings.sonarProjectKey}", "${sonarSettings.sonarProjectName}", "N${BUILD_ID}")
+          //if (status != 0)
+          //{
+          //  slackSend teamDomain: "${slackSettings.teamDomain}", botUser: slackSettings.isBotUser, tokenCredentialId: "${slackSettings.slackTokenID}", channel: "${slackSettings.slackChannel}", color: "warning", message: "There have been SONAR TEST failures - this is for now just a warning"
+          //}
+        }
+      }
+    }
+    //if it's demanded uncomment this
+    //timeout(time: 1, unit: 'MINUTES')
+    //{
+    //    waitForQualityGate()
+    //}
+  }
+}
+catch (Exception exception)
+{
+  errorMessage = exception.getMessage()
+  errorMessage = "${slackSettings.errorRecipients}\n${errorMessage}"
+  errors.defaultHandler(exception, slackSettings)
+}
+finally
+{
+  stage('Finalisation')
+  {
+  	if(errorMessage != '')
+    {
+    	ecxHelper.defaultFinalisation(nodeNames, errorMessage, slackSettings)
+    }
+  }
+}

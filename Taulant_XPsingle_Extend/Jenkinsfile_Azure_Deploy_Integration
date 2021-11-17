@@ -1,0 +1,511 @@
+#!groovy
+def nexusSettings = [ nexusGroupID: 'FISKARS',
+                      repositoryUrl: '/content/repositories/Releases/',
+                      nexusBaseUrl: 'http://192.168.12.14:8081/nexus']
+def gitSettings = [ defaultGitUserCredID: 'git-user',
+                    defaultGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms.git',
+                    defaultGitBranch: 'develop',
+                    pipelineGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-deploy-cms.git',
+                    pipelineGitBranch: 'master']
+def slackSettings = [ enableSlackNotification: true,
+                      slackTokenID: 'slack-app-token',
+                      slackChannel: 'fiskars_jenkins',
+                      slackBaseURL: 'https://ibm-ecxio.slack.com/services/hooks/jenkins-ci/',
+                      teamDomain: 'ibm-ecxio',
+                      isBotUser: false,
+                      errorRecipients: '<@taulant.racaj1>']
+def msbuildSettings = [ nugetPath: 'C:\\tools\\nuget.exe',
+                        codeCoverageBuildPath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\TestAgent\\Team Tools\\Dynamic Code Coverage Tools\\CodeCoverage.exe',
+                        msbuildPath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\BuildTools\\MSBuild\\15.0\\Bin\\msbuild.exe',
+                        mstestConsolePath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\TestAgent\\Common7\\IDE\\CommonExtensions\\Microsoft\\TestWindow\\vstest.console.exe',
+                        vsToolsPath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\BuildTools\\MSBuild\\Microsoft\\VisualStudio\\v15.0',
+                        msdeployPath: 'C:\\Program Files (x86)\\IIS\\Microsoft Web Deploy V3\\msdeploy.exe']
+def globalSettings = [  userInputTimeout: 260000,
+                        extendedMessageInfo: '']
+def projectSettings = [
+  sourcecodeFolder: '',
+  buildServerNode: 'BUILD DEV',
+  pubxml: 'D:\\Deployment\\DEV\\DevProfile.pubxml',
+  baselineFolderCM: 'D:\\Deployment\\Azure\\Integration\\ne-oned-cm-int.baseline',
+  baselineFolderCD: 'D:\\Deployment\\Azure\\Integration\\ne-oned-cd-int.baseline',
+  configFolderCM: 'configs\\ne-oned-cm-int',
+  configFolderCD: 'configs\\ne-oned-cd-int',
+  tdsBuildTarget: 'StageCmTDS',
+  core: [
+          name: 'Core',
+          gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms.git',
+          artifactId: 'Core',
+          branch: 'develop'
+  ],
+  brands: [
+    [
+      name: 'Fiskars',
+      gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-fiskars-cms.git',
+      artifactId: 'Brand_Fiskars',
+      branch: 'develop'
+    ],
+    [
+      name: 'Gerber',
+      gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-gerber-cms.git',
+      artifactId: 'Brand_Gerber',
+      branch: 'develop'
+    ],
+    [
+      name: "RoyalDoulton",
+      gitRepo: "https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-royaldoulton-cms.git",
+      artifactId: 'Brand_RoyalDoulton',
+      branch: 'develop'
+    ],
+    [
+      name: "Waterford",
+      gitRepo: "https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-waterford-cms.git",
+      artifactId: 'Brand_Waterford',
+      branch: 'develop'
+    ],
+    [
+      name: "Wedgwood",
+      gitRepo: "https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-wedgwood-cms.git",
+      artifactId: 'Brand_Wedgwood',
+      branch: 'develop'
+    ]
+  ]
+]
+
+def azureSettings = [
+  servicePrincipal: [
+    appService: 'OneD_ECX_ServicePrincipal',
+    storageService: ''
+  ],
+  resourceGroupName: 'rg-se-in-ne-test03-oned',
+  appServices: [
+    CD: 'ne-oned-cd-int',
+    CM: 'ne-oned-cm-int'
+  ],
+  publishSettings: [
+    CD: 'D:\\Deployment\\Azure\\Integration\\ne-oned-cd-int.PublishSettings',
+    CM: 'D:\\Deployment\\Azure\\Integration\\ne-oned-cm-int.PublishSettings'
+  ],
+  ftp: [
+        CD: [
+              ftpUsername: 'fiskarsInt\\sitecoreFtpUserJenkins',
+              ftpPasswd: 'X2q9DnPkeLvSHZSXoygqC2atbEyhBb5LCEgxRhTRdKhnkJxTMycnwF3Wglor']
+          ,
+        CM: [
+              ftpUsername: 'fiskarsInt\\sitecoreFtpUserJenkins',
+              ftpPasswd: 'X2q9DnPkeLvSHZSXoygqC2atbEyhBb5LCEgxRhTRdKhnkJxTMycnwF3Wglor']
+      ]
+]
+
+lib = library('helper').io.ecx
+ecxHelper = lib.ECXHelperWindows.new(this)
+errors = lib.errors.ErrorHandler.new(this)
+azureUtils = lib.utils.azure.AzureUtils.new(this)
+
+jsonData = {}
+nodeNames = ["master","${projectSettings.buildServerNode}"]
+errorMessage = ''
+
+try
+{
+  stage('Clean & Init')
+  {
+    env.STAGE_NAME = 'Clean & Init'
+    def branches = [:]
+    nodeNames.each { nodeName ->
+      def nodeNameVar = nodeName
+      branches["${nodeNameVar}"] =
+      {
+        node("${nodeNameVar}")
+        {
+          ecxHelper.cleanUp()
+          if (!nodeNameVar.equals("master"))
+          {
+            dir('sourcecode')
+            {
+              projectSettings.sourcecodeFolder = ecxHelper.getCurrentDirectory()
+            }
+          }
+          else
+          {
+            try
+            {
+              wrap([$class: 'BuildUser'])
+              {
+                env.userFullName = "${BUILD_USER}"
+              }
+            }
+            catch (Exception e)
+            {
+              env.userFullName = "Jenkins"
+            }
+            if (slackSettings.enableSlackNotification)
+            {
+              slackSend baseUrl: "${slackSettings.slackBaseURL}", teamDomain: "${slackSettings.teamDomain}", botUser: slackSettings.isBotUser, tokenCredentialId: "${slackSettings.slackTokenID}", channel: "${slackSettings.slackChannel}", message: "${env.JOB_NAME}: started by user: ${env.userFullName}\n (<${env.RUN_DISPLAY_URL}|Open>)"
+            }
+          }
+        }
+      }
+    }
+    parallel branches
+  }
+
+  stage('Build Brands')
+  {
+    env.STAGE_NAME = 'Build Brands'
+    echo "${env.STAGE_NAME}"
+    def branches = [:]
+    projectSettings.brands.each { brand ->
+      def brandNameVar = brand.name
+      def brandGitRepoVar = brand.gitRepo
+      branches["MSBuild ${brandNameVar}"] =
+      {
+        node("${projectSettings.buildServerNode}")
+        {
+          dir("sourcecode_${brandNameVar}")
+          {
+            git branch: "${brand.branch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${brandGitRepoVar}"
+          }
+          dir("sourcecode_${brandNameVar}\\sc")
+          {
+            def status = 0
+            def buildDir = ecxHelper.getCurrentDirectory()
+            status += ecxHelper.nugetRestoreMsbuild("${msbuildSettings.msbuildPath}", "Fiskars.${brandNameVar}.sln", "NuGet.config")
+            //TODO output into an isolated folder - because it might fail with file used by another process aotherwise when copying it over - so lets merge this later without msbuild.
+            status += ecxHelper.msbuildSolution("${msbuildSettings.msbuildPath}", "Fiskars.${brandNameVar}.sln", "${projectSettings.pubxml}", "Release", "${buildDir}\\output", "${msbuildSettings.vsToolsPath}")
+            if (status != 0)
+            {
+              throw new Exception()
+            }
+          }
+          //TODO output into an isolated folder - because it might fail with file used by another process aotherwise when copying it over - so lets merge this later without msbuild.
+          dir("sourcecode_${brandNameVar}\\sc\\output")
+          {
+            stash includes: "**/**", name: "stashBrandOutput_${brandNameVar}"
+          }
+          dir("${projectSettings.sourcecodeFolder}\\sc\\output")
+          {
+            unstash "stashBrandOutput_${brandNameVar}"
+          }
+          //TODO TESTING new config approach
+          /*
+          dir("sourcecode_${brandNameVar}\\sc\\configs")
+          {
+            stash includes: "", name: "stashConfigFiles_${brandNameVar}"
+          }
+          dir("${projectSettings.sourcecodeFolder}\\configs")
+          {
+            unstash "stashConfigFiles_${brandNameVar}"
+          }
+           */
+        }
+      }
+      branches["Frontend ${brandNameVar}"] =
+      {
+        node ("master")
+        {
+          dir('pipeline')
+          {
+            git branch: "${gitSettings.pipelineGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+            load "tools.groovy"
+          }
+          def sourcecodeCore = ''
+          dir('sourcecode')
+          {
+            sourcecodeCore = pwd()
+            git branch: "${brand.branch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.defaultGitRepo}"
+            jsonData = readJSON file: "sc/src/Project/Core/build-config.json"
+          }
+          dir("sourcecode_${brandNameVar}")
+          {
+            git branch: "${brand.branch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${brandGitRepoVar}"
+          }
+          dir("sourcecode_${brandNameVar}/sc")
+          {
+            ecxHelper.mavenCommand("clean test -DcoreProjectPath=${sourcecodeCore}")
+            stash includes: "${jsonData.pureProductionOutputFolder}/**", name: "stashFrontendFiles_${brandNameVar}"
+          }
+        }
+        node ("${projectSettings.buildServerNode}")
+        {
+          dir("${projectSettings.sourcecodeFolder}\\sc\\output")
+          {
+            unstash "stashFrontendFiles_${brandNameVar}"
+          }
+        }
+      }
+    }
+    parallel branches
+  }
+
+  stage('Build Core')
+  {
+    env.STAGE_NAME = 'Build Core'
+    parallel("MSBuild" :
+    {
+      node ("${projectSettings.buildServerNode}")
+      {
+        dir("sourcecode_Core")
+        {
+          git branch: "${projectSettings.core.branch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.defaultGitRepo}"
+        }
+        dir("sourcecode_Core\\sc")
+        {
+          def status = 0
+          status += ecxHelper.nugetRestoreMsbuild("${msbuildSettings.msbuildPath}", "Fiskars.Core.sln", "NuGet.config")
+          status += ecxHelper.msbuildSolution("${msbuildSettings.msbuildPath}", "Fiskars.Core.sln", "${projectSettings.pubxml}", "Release", "${projectSettings.sourcecodeFolder}\\sc\\output", "${msbuildSettings.vsToolsPath}")
+          if (status != 0)
+          {
+            throw new Exception()
+          }
+          dir("${projectSettings.sourcecodeFolder}\\${projectSettings.websiteconfigfolder}")
+          {
+            fileOperations([fileCopyOperation(excludes: "", includes: "**/**", targetLocation: "${projectSettings.sourcecodeFolder}\\sc\\output")])
+          }
+        }
+        //TODO TESTING new config approach
+        //dir("sourcecode_Core\\sc\\configs")
+        dir("sourcecode_Core\\configs")
+        {
+          stash includes: "**/**", name: "stashConfigFiles_Core"
+        }
+        dir("${projectSettings.sourcecodeFolder}\\configs")
+        {
+          unstash "stashConfigFiles_Core"
+        }
+      }
+    },
+    "Frontend Core" :
+    {
+      node ("master")
+      {
+        dir('pipeline')
+        {
+          load "tools.groovy"
+        }
+        dir('sourcecode')
+        {
+          git branch: "${projectSettings.core.branch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.defaultGitRepo}"
+          jsonData = readJSON file: "sc/src/Project/Core/build-config.json"
+        }
+        dir("sourcecode/sc")
+        {
+          ecxHelper.mavenCommand("clean test")
+          stash includes: "${jsonData.pureProductionOutputFolder}/**", name: 'stashFrontendFiles'
+        }
+      }
+      node ("${projectSettings.buildServerNode}")
+      {
+        dir("${projectSettings.sourcecodeFolder}\\sc\\output")
+        {
+          unstash "stashFrontendFiles"
+        }
+      }
+    })
+  }
+
+  stage('stash')
+  {
+    node ("${projectSettings.buildServerNode}")
+    {
+      dir("${projectSettings.sourcecodeFolder}\\sc\\output")
+      {
+        stash includes: "**/**", name: "stashOutputFiles"
+      }
+    }
+  }
+
+  stage('Deploy Zip to AppServices')
+  {
+    def status = 0
+    def zipdir = ''
+    node ("${projectSettings.buildServerNode}")
+    {
+      withCredentials([azureServicePrincipal("${azureSettings.servicePrincipal.appService}")])
+      {
+        status += azureUtils.azAppService.stopAppService("${azureSettings.appServices.CM}", "${azureSettings.resourceGroupName}", "$AZURE_CLIENT_ID", "$AZURE_CLIENT_SECRET", "$AZURE_TENANT_ID")
+        status += azureUtils.azAppService.stopAppService("${azureSettings.appServices.CD}", "${azureSettings.resourceGroupName}", "$AZURE_CLIENT_ID", "$AZURE_CLIENT_SECRET", "$AZURE_TENANT_ID")
+      }
+
+      if (status != 0) {
+        throw new Exception()
+      }
+
+      dir('pipeline')
+      {
+        git branch: "${gitSettings.pipelineGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+        load "tools.groovy"
+      }
+      dir('sourcecode')
+      {
+        //git branch: "${userInputBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.defaultGitRepo}"
+        //projectSettings.sourcecodeFolder = ecxHelper.getCurrentDirectory()
+      }
+
+      zipdir = ecxHelper.getCurrentDirectory()
+    }
+    parallel("CM":
+    {
+      node ("${projectSettings.buildServerNode}")
+      {
+        def tempUnzipFolder = ''
+        dir('unzippedfiles')
+        {
+          tempUnzipFolder = ecxHelper.getCurrentDirectory()
+        }
+        dir("${projectSettings.baselineFolderCM}")
+        {
+          fileOperations([fileCopyOperation(excludes: "*.zip", includes: "**/**", targetLocation: "${tempUnzipFolder}")])
+        }
+        dir("${tempUnzipFolder}")
+        {
+          status += azureUtils.webDeployViaMsDeployTest("${tempUnzipFolder}\\App_Config", "D:\\home\\site\\wwwroot\\App_Config", "${msbuildSettings.msdeployPath}", "${azureSettings.publishSettings.CM}")
+          status += azureUtils.webDeployViaMsDeployTest("${tempUnzipFolder}\\bin", "D:\\home\\site\\wwwroot\\bin", "${msbuildSettings.msdeployPath}", "${azureSettings.publishSettings.CM}")
+          status += azureUtils.webDeployViaMsDeployTest("${tempUnzipFolder}\\Views", "D:\\home\\site\\wwwroot\\Views", "${msbuildSettings.msdeployPath}", "${azureSettings.publishSettings.CM}")
+        }
+        dir("${tempUnzipFolder}")
+        {
+          unstash "stashOutputFiles"
+          //cleanup for packages
+          fileOperations([fileDeleteOperation(excludes: '', includes: 'App_Config/Include/SiteDefinition.config')])
+          fileOperations([fileDeleteOperation(excludes: '', includes: 'App_Config/ConnectionStrings.config')])
+          fileOperations([fileDeleteOperation(excludes: '', includes: 'Web.config')])
+        }
+        dir("${projectSettings.sourcecodeFolder}\\${projectSettings.configFolderCM}")
+        {
+          fileOperations([fileCopyOperation(excludes: "", includes: "**/**", targetLocation: "${tempUnzipFolder}")])
+        }
+        dir("${tempUnzipFolder}")
+        {
+          zip dir: "", glob: "", zipFile: "${zipdir}\\${azureSettings.appServices.CM}.zip"
+        }
+        status += azureUtils.webDeployViaMsDeploy("${zipdir}", "${azureSettings.appServices.CM}.zip", "${msbuildSettings.msdeployPath}", "${azureSettings.publishSettings.CM}")
+        if (status != 0) {
+          throw new Exception()
+        }
+      }
+    },
+    "CD":
+    {
+      node ("${projectSettings.buildServerNode}")
+      {
+        def tempUnzipFolder = ''
+        dir('unzippedfiles')
+        {
+          tempUnzipFolder = ecxHelper.getCurrentDirectory()
+        }
+        dir("${projectSettings.baselineFolderCD}")
+        {
+          fileOperations([fileCopyOperation(excludes: "*.zip", includes: "**/**", targetLocation: "${tempUnzipFolder}")])
+        }
+        dir("${tempUnzipFolder}")
+        {
+          status += azureUtils.webDeployViaMsDeployTest("${tempUnzipFolder}\\App_Config", "D:\\home\\site\\wwwroot\\App_Config", "${msbuildSettings.msdeployPath}", "${azureSettings.publishSettings.CD}")
+          status += azureUtils.webDeployViaMsDeployTest("${tempUnzipFolder}\\bin", "D:\\home\\site\\wwwroot\\bin", "${msbuildSettings.msdeployPath}", "${azureSettings.publishSettings.CD}")
+          status += azureUtils.webDeployViaMsDeployTest("${tempUnzipFolder}\\Views", "D:\\home\\site\\wwwroot\\Views", "${msbuildSettings.msdeployPath}", "${azureSettings.publishSettings.CD}")
+        }
+        dir("${tempUnzipFolder}")
+        {
+          unstash "stashOutputFiles"
+          //cleanup for packages
+          fileOperations([fileDeleteOperation(excludes: '', includes: 'App_Config/Include/SiteDefinition.config')])
+          fileOperations([fileDeleteOperation(excludes: '', includes: 'App_Config/ConnectionStrings.config')])
+          fileOperations([fileDeleteOperation(excludes: '', includes: 'Web.config')])
+        }
+        dir("${projectSettings.sourcecodeFolder}\\${projectSettings.configFolderCD}")
+        {
+          fileOperations([fileCopyOperation(excludes: "", includes: "**/**", targetLocation: "${tempUnzipFolder}")])
+        }
+        dir("${tempUnzipFolder}")
+        {
+          zip dir: "", glob: "", zipFile: "${zipdir}\\${azureSettings.appServices.CD}.zip"
+        }
+        status += azureUtils.webDeployViaMsDeploy("${zipdir}", "${azureSettings.appServices.CD}.zip", "${msbuildSettings.msdeployPath}", "${azureSettings.publishSettings.CD}")
+        if (status != 0) {
+          throw new Exception()
+        }
+      }
+    })
+
+    node ("${projectSettings.buildServerNode}")
+    {
+      withCredentials([azureServicePrincipal("${azureSettings.servicePrincipal.appService}")])
+      {
+        azureUtils.azAppService.startAppService("${azureSettings.appServices.CM}", "${azureSettings.resourceGroupName}", "$AZURE_CLIENT_ID", "$AZURE_CLIENT_SECRET", "$AZURE_TENANT_ID")
+        azureUtils.azAppService.startAppService("${azureSettings.appServices.CD}", "${azureSettings.resourceGroupName}", "$AZURE_CLIENT_ID", "$AZURE_CLIENT_SECRET", "$AZURE_TENANT_ID")
+      }
+    }
+  }
+
+  stage('Deploy TDS')
+  {
+    node ("${projectSettings.buildServerNode}")
+    {
+      retry(40)
+      {
+      	powershell 'Write-Output "START!"'
+        httpRequest url:"https://${azureSettings.appServices.CM}.azurewebsites.net/_DEV/TdsService.asmx", timeout: 120
+      }
+      // CORE
+      dir("sourcecode_${projectSettings.core.name}")
+      {
+        git branch: "${projectSettings.core.branch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${projectSettings.core.gitRepo}"
+      }
+      dir("sourcecode_${projectSettings.core.name}\\sc")
+      {
+        def status = ecxHelper.tdsDeploySolution("${msbuildSettings.msbuildPath}", "Fiskars.${projectSettings.core.name}.sln", "${projectSettings.tdsBuildTarget}", "${projectSettings.pubxml}", "${msbuildSettings.vsToolsPath}")
+        if (status != 0)
+        {
+          throw new Exception()
+        }
+      }
+      // BRANDS
+      projectSettings.brands.each { brand ->
+        dir("sourcecode_${brand.name}")
+        {
+          git branch: "${brand.branch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${brand.gitRepo}"
+        }
+        dir("sourcecode_${brand.name}\\sc")
+        {
+          def status = ecxHelper.tdsDeploySolution("${msbuildSettings.msbuildPath}", "Fiskars.${brand.name}.sln", "${projectSettings.tdsBuildTarget}", "${projectSettings.pubxml}", "${msbuildSettings.vsToolsPath}")
+          if (status != 0)
+          {
+          	powershell 'Write-Output status'
+            throw new Exception()
+          }
+        }
+      }
+    }
+  }
+  stage('Warmup URLS')
+  {
+    node ("master")
+    {
+      dir('pipeline')
+      {
+        warmupUrls = readJSON file: "Files/INT/warmup_urls.json"
+
+          warmupUrls.urls.each { url ->
+            try {
+              httpRequest url: "${url}", timeout: 120
+            }
+            catch (Exception exception) {
+              //Silently fail
+            }
+          }
+      }
+    }
+  }
+}
+catch (Exception exception)
+{
+  errorMessage = exception.getMessage()
+  errorMessage = "${slackSettings.errorRecipients}\n${errorMessage}"
+  errors.defaultHandler(exception, slackSettings)
+}
+finally
+{
+  stage('Finalisation')
+  {
+    ecxHelper.defaultFinalisation(nodeNames, errorMessage, slackSettings)
+  }
+}

@@ -1,0 +1,358 @@
+#!groovy
+def nexusSettings = [ nexusGroupID: 'FISKARS',
+                      repositoryUrl: '/content/repositories/Releases/',
+                      nexusArtifacts: [
+                        core: [
+                          name: 'Core',
+                        ],
+                        brand_fiskars: [
+                           name: 'Brand Fiskars',
+                         ]
+                      ],
+                      nexusBaseUrl: 'http://192.168.12.14:8081/nexus']
+def gitSettings = [ defaultGitUserCredID: 'git-user',
+                    defaultGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms.git',
+                    defaultGitBranch: 'develop',
+                    pipelineGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-deploy-cms.git',
+                    pipelineGitBranch: 'master'
+                  ]
+def sonarSettings = [ sonarMsBuildPath: 'D:\\Deployment\\sonar-scanner-msbuild-4.3.1.1372-net46\\SonarScanner.MSBuild.exe',
+                      sonarHostUrl: 'http://10.0.12.141:8080',
+                      sonarProjectKey: 'FISKARSCMS',
+                      sonarProjectName: 'Fiskars CMS']
+def slackSettings = [ enableSlackNotification: true,
+                      slackTokenID: 'slacktoken_Fiskars',
+                      slackChannel: 'fiskars_jenkins',
+                      slackBaseURL: 'https://ibm-ecxio.slack.com/services/hooks/jenkins-ci/',
+                      teamDomain: 'ibm-ecxio',
+                      isBotUser: false,
+                      errorRecipients: '<@taulant.racaj1>']
+def msbuildSettings = [ nugetPath: 'C:\\tools\\nuget.exe',
+                        codeCoverageBuildPath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\TestAgent\\Team Tools\\Dynamic Code Coverage Tools\\CodeCoverage.exe',
+                        msbuildPath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\BuildTools\\MSBuild\\15.0\\Bin\\msbuild.exe',
+                        mstestConsolePath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\TestAgent\\Common7\\IDE\\CommonExtensions\\Microsoft\\TestWindow\\vstest.console.exe',
+                        vsToolsPath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\BuildTools\\MSBuild\\Microsoft\\VisualStudio\\v15.0',
+                        msdeployPath: 'C:\\Program Files (x86)\\IIS\\Microsoft Web Deploy V3\\msdeploy.exe']
+def globalSettings = [  userInputTimeout: 260000,
+                        extendedMessageInfo: '']
+def projectSettings = [ sourcecodeFolder: '',
+                        buildServerNode: 'BUILD DEV',
+                        pubxml: 'D:\\Deployment\\DEV\\DevProfile.pubxml',
+                        websiteconfigfolder: 'configs\\fiskars.dev.sc',
+                        iisWebsitename: 'fiskars.dev.sc',
+                        iisWebsitenameXconnect: 'fiskars.dev.xconnect',
+                        iisWebsitenameidentity: 'fiskars.dev.identityserver',
+                        targetIISWebsitefolder: 'C:\\inetpub\\wwwroot\\fiskars.dev.sc',
+                        targetIISWebsitefolderXconnect: 'C:\\inetpub\\wwwroot\\fiskars.dev.xconnect',
+                        websiteBaselinefolder: 'D:\\Deployment\\DEV\\fiskars.dev.sc.baseline',
+                        websiteBaselinefolderXconnect: 'D:\\Deployment\\DEV\\fiskars.dev.xconnect.baseline',
+                        xconnectAutomationServiceName: 'fiskars.dev.xconnect-MarketingAutomationService',
+                        xconnectIndexingWorkerServiceName: 'fiskars.dev.xconnect-IndexWorker',
+                        xconnectProcessingEngineServiceName: 'fiskars.dev.xconnect-ProcessingEngineService',
+                        solrServiceName: 'solr721',
+                        sqlServer: [
+                                hostname: '(local)',
+                                dbuser: 'sa',
+                                dbpasswd: 'zk2EZF4kLLqCImjBlGjT',
+                                backupFilePathCore: 'D:\\Deployment\\DEV\\fiskars.dev_Core.baseline.bak',
+                                backupDbNameCore: 'fiskars.dev_Core',
+                                backupFilePathMaster: 'D:\\Deployment\\DEV\\fiskars.dev_Master.baseline.bak',
+                                backupDbNameMaster: 'fiskars.dev_Master'
+                        ],
+                        brands: [
+                          [ name: 'Fiskars',
+                            gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-fiskars-cms.git',
+                            artifactId: 'Brand_Fiskars'
+                          ],
+                          [ name: 'Gerber',
+                            gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-gerber-cms.git',
+                            artifactId: 'Brand_Gerber'
+                          ],
+                          [ name: 'RoyalDoulton',
+                            gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-royaldoulton-cms.git',
+                            artifactId: 'Brand_RoyalDoulton'
+                          ],
+                          [ name: 'Waterford',
+                            gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-waterford-cms.git',
+                            artifactId: 'Brand_Waterford'
+                          ],
+                          [ name: 'Wedgwood',
+                            gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-wedgwood-cms.git',
+                            artifactId: 'Brand_Wedgwood'
+                          ]
+                        ]
+                      ]
+
+def lib = library('helper').io.ecx
+def ecxHelper = lib.ECXHelperWindows.new(this)
+def errors = lib.errors.ErrorHandler.new(this)
+def parser = lib.utils.ParseUtils.new(this)
+def sonarUtils = lib.utils.sonar.SonarUtils.new(this)
+def errorMessage = ''
+def jsonData = ''
+
+def nodeNames = ["master","${projectSettings.buildServerNode}"]
+
+try
+{
+  stage('Interaction')
+  {
+    env.STAGE_NAME = 'Interaction'
+    node('master')
+    {
+      try
+      {
+        wrap([$class: 'BuildUser'])
+        {
+          env.userFullName = "${BUILD_USER}"
+        }
+      }
+      catch (Exception ex)
+      {
+        env.userFullName = "Jenkins"
+      }
+      if (slackSettings.enableSlackNotification)
+      {
+        slackSend teamDomain: "${slackSettings.teamDomain}", botUser: slackSettings.isBotUser, tokenCredentialId: "${slackSettings.slackTokenID}", channel: "${slackSettings.slackChannel}", message: "Started ${env.JOB_NAME} ${env.BUILD_DISPLAY_NAME} by ${env.userFullName}"
+      }
+
+      startMillis = System.currentTimeMillis()
+
+      try
+      {
+        timeout(time: globalSettings.userInputTimeout, unit: 'MILLISECONDS')
+        {
+          def brandChoicesList = []
+          projectSettings.brands.each { brand ->
+            brandChoicesList << "${brand.name}"
+          }
+          brandChoices = brandChoicesList.join('\n')
+          userInputBrand = input(
+                  message: 'Which BRAND package should be created?',
+                  id: 'userInputBrand',
+                  parameters: [
+                  [$class: 'ChoiceParameterDefinition', choices: brandChoices, description: 'Creates a Brand', name: 'Brand']
+          ])
+
+          echo "Used Brand(s): ${userInputBrand}"
+
+          def lastUsedCoreBranch = "${gitSettings.defaultGitBranch}"
+          def  file_is_here_Core = fileExists "${env.WORKSPACE}/../last_used_inputbranch_Core_${env.JOB_NAME}.txt"
+          if(file_is_here_Core)
+          {
+            lastUsedCoreBranch = readFile "${env.WORKSPACE}/../last_used_inputbranch_Core_${JOB_NAME}.txt"
+          }
+
+          userInputCoreBranch = input(
+                  id: 'userInputCoreBranch',
+                  message: 'Please enter Branch Name for Core',
+                  parameters: [
+                          string(defaultValue: "${lastUsedCoreBranch}", description: "eg: \"feature/xyz\" or \"hotfix/xyz\" or simply \"develop\" branch", name: 'userInputBranch', trim: true)
+                  ])
+          if (!userInputCoreBranch.matches("^release\\/release[0-9\\.]{1,}|hotfix\\/hotfix[0-9\\.]{1,}|develop")) {
+            error('error_illegal_version')
+          }
+          fileOperations([fileCreateOperation(fileContent: "${userInputCoreBranch}", fileName: "../last_used_inputbranch_Core_${JOB_NAME}.txt")])
+
+          echo "Used Core Branch: ${userInputCoreBranch}"
+          
+          def lastUsedBranch = "${gitSettings.defaultGitBranch}"
+          def  file_is_here = fileExists "${env.WORKSPACE}/../last_used_inputbranch_${env.JOB_NAME}.txt"
+          if(file_is_here)
+          {
+            lastUsedBranch = readFile "${env.WORKSPACE}/../last_used_inputbranch_${JOB_NAME}.txt"
+          }
+          
+          userInputBranch = input(
+                  id: 'userInputBranch',
+                  message: "Please enter Branch Name for brand ${userInputBrand} to create the package for",
+                  parameters: [
+                          string(defaultValue: "${lastUsedBranch}", description: "eg: \"feature/xyz\" or \"hotfix/xyz\" or simply \"develop\" branch", name: 'userInputBranch', trim: true)
+                  ])
+          if (!userInputBranch.matches("^release\\/release[0-9\\.]{1,}|hotfix\\/hotfix[0-9\\.]{1,}|develop")) {
+            error('error_illegal_version')
+          }
+          fileOperations([fileCreateOperation(fileContent: "${userInputBranch}", fileName: "../last_used_inputbranch_${JOB_NAME}.txt")])
+
+          echo "Used Branch for Core: ${userInputBranch}"
+
+          projectSettings.brands.each { brand ->
+            if (userInputBrand.equals(brand.name)) {
+              // always take latest version from core
+              latestVersion = ecxHelper.getLatestVersionFromNexus("${nexusSettings.nexusBaseUrl}${nexusSettings.repositoryUrl}", "${nexusSettings.nexusGroupID}", "${brand.artifactId}")
+              latestVersions = ecxHelper.getLatestVersionsFromNexus("${nexusSettings.nexusBaseUrl}${nexusSettings.repositoryUrl}", "${nexusSettings.nexusGroupID}", "${brand.artifactId}", 5)
+              userInputReleaseVersion = input(
+                      id: 'userInputReleaseVersion',
+                      message: 'Please enter Release Version for the new artifact',
+                      parameters: [
+                              string(defaultValue: "${latestVersion}", description: "Latest version in Nexus is:\n${latestVersion}\nTop 5 latest Versions are:\n${latestVersions}", name: 'ReleaseVersion', trim: true)
+                      ]
+              )
+              if (!userInputReleaseVersion.matches("^\\d{1,}\\.\\d{1,}\\.\\d{1,}\\.\\d{1,}(\\.\\d{1,})?-RELEASE|\\d{1,}\\.\\d{1,}\\.\\d{1,}\\.\\d{1,}(\\.\\d{1,})?-HOTFIX|\\d{1,}\\.\\d{1,}\\.\\d{1,}\\.\\d{1,}(\\.\\d{1,})?-DEVELOP"))
+              {
+                error('error_illegal_version')
+              }
+              echo "Used Release \"${userInputReleaseVersion}\" for Brand: ${brand.name}"
+            }
+          }
+
+          globalSettings.extendedMessageInfo += "Brands: ${userInputBrand}\n"
+          globalSettings.extendedMessageInfo += "Branch: ${userInputBranch}\n"
+          globalSettings.extendedMessageInfo += "Release Version: ${userInputReleaseVersion}\n"
+          if (slackSettings.enableSlackNotification)
+          {
+            slackSend teamDomain: "${slackSettings.teamDomain}", botUser: slackSettings.isBotUser, tokenCredentialId: "${slackSettings.slackTokenID}", channel: "${slackSettings.slackChannel}", message: "${globalSettings.extendedMessageInfo}\n (<${env.RUN_DISPLAY_URL}|Open>)"
+          }
+        }
+      }
+      catch (Exception exception)
+      {
+        endMillis = System.currentTimeMillis()
+        if (endMillis - startMillis >= globalSettings.userInputTimeout)
+        {
+          error('error_input_timeout')
+        }
+        throw exception
+      }
+    }
+  }
+
+  stage('Clean & Init')
+  {
+    env.STAGE_NAME = 'Clean & Init'
+    def branches = [:]
+    nodeNames.each { nodeName ->
+      def nodeNameVar = nodeName
+      branches["${nodeNameVar}"] =
+      {
+        node("${nodeNameVar}")
+        {
+          ecxHelper.cleanUp()
+          if (nodeNameVar.equals("master"))
+          {
+            dir('pipeline')
+            {
+              git branch: "${gitSettings.pipelineGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+            }
+          }
+          else
+          {
+            dir('pipeline')
+            {
+              git branch: "${gitSettings.pipelineGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+            }
+            dir('sourcecode')
+            {
+              git branch: "${userInputCoreBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.defaultGitRepo}"
+              projectSettings.sourcecodeFolder = ecxHelper.getCurrentDirectory()
+            }
+          }
+        }
+      }
+    }
+    parallel branches
+  }
+
+  stage('Build Brands')
+  {
+    env.STAGE_NAME = 'Build Brands'
+    def branches = [:]
+        projectSettings.brands.each { brand ->
+          if (userInputBrand.equals(brand.name)) {
+            def brandNameVar = brand.name
+            def brandGitRepoVar = brand.gitRepo
+            branches["MSBuild ${brandNameVar}"] =
+            {
+              node("${projectSettings.buildServerNode}")
+              {
+                dir("sourcecode_${brandNameVar}")
+                {
+                  git branch: "${userInputBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${brandGitRepoVar}"
+                }
+                dir("sourcecode_${brandNameVar}\\sc")
+                {
+                  def status = 0
+                  status += ecxHelper.nugetRestoreMsbuild("${msbuildSettings.msbuildPath}", "Fiskars.${brandNameVar}.sln", "NuGet.config")
+                  status += ecxHelper.msbuildSolution("${msbuildSettings.msbuildPath}", "Fiskars.${brandNameVar}.sln", "${projectSettings.pubxml}", "Release", "${projectSettings.sourcecodeFolder}\\sc\\output", "${msbuildSettings.vsToolsPath}")
+                  if (status != 0)
+                  {
+                    throw new Exception()
+                  }
+                }
+              }
+            }
+            branches["Frontend ${brandNameVar}"] =
+            {
+              node ("master")
+              {
+                dir('pipeline')
+                {
+                  git branch: "${gitSettings.pipelineGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+                  load "tools.groovy"
+                }
+                def sourcecodeCore = ''
+                dir('sourcecode')
+                {
+                  sourcecodeCore = ecxHelper.getCurrentDirectory()
+                  git branch: "${userInputCoreBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.defaultGitRepo}"
+                  jsonData = readJSON file: "sc/src/Project/Core/build-config.json"
+               }
+               dir("sourcecode_${brandNameVar}")
+                {
+                  git branch: "${userInputBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${brandGitRepoVar}"
+               }
+                dir("sourcecode_${brandNameVar}/sc")
+                {
+                  ecxHelper.mavenCommand("clean test -DcoreProjectPath=${sourcecodeCore}")
+                  stash includes: "${jsonData.pureProductionOutputFolder}/**", name: "stashFrontendFiles_${brandNameVar}"
+                }
+              }
+              node ("${projectSettings.buildServerNode}")
+              {
+                dir("${projectSettings.sourcecodeFolder}\\sc\\output")
+                {
+                  unstash "stashFrontendFiles_${brandNameVar}"
+                }
+              }
+            }
+      }
+    }
+    parallel branches
+  }
+
+  stage('Archive')
+  {
+    env.STAGE_NAME = 'Archive'
+    node ("${projectSettings.buildServerNode}")
+    {
+      dir('pipeline')
+      {
+        load "tools.groovy"
+      }
+      dir ("${projectSettings.sourcecodeFolder}\\sc\\output")
+      {
+        def shortRelease = userInputReleaseVersion.split('-')[0]
+        fileOperations([fileCreateOperation(fileContent: "${shortRelease}", fileName: "version.txt")])
+        zip dir: "", glob: "**/**", zipFile: "Website.zip"
+        projectSettings.brands.each { brand ->
+          if (userInputBrand.equals(brand.name)) {
+            ecxHelper.nexusDeploy("Website.zip", "${nexusSettings.nexusBaseUrl}${nexusSettings.repositoryUrl}", "${nexusSettings.nexusGroupID}", "${brand.artifactId}", "${userInputReleaseVersion}", "zip", "Releases")
+          }
+        }
+      }
+    }
+  }
+}
+catch (Exception exception)
+{
+  errorMessage = exception.getMessage()
+  errorMessage = "${slackSettings.errorRecipients}\n${errorMessage}"
+  errors.defaultHandler(exception, slackSettings)
+}
+finally
+{
+  stage('Finalisation')
+  {
+    ecxHelper.defaultFinalisation(nodeNames, errorMessage, slackSettings)
+  }
+}

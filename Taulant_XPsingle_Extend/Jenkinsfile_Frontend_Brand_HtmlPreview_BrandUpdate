@@ -1,0 +1,142 @@
+#!groovy
+def gitSettings = [ defaultGitUserCredID: 'git-user',
+                    defaultGitBranch: 'develop',
+                    defaultGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms.git',
+                    pipelineGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms-deploy.git',
+                    pipelineGitBranch: 'master']
+def slackSettings = [ enableSlackNotification: true,
+                      slackTokenID: 'slacktoken_Fiskars',
+                      slackChannel: 'fiskars_jenkins',
+                      slackBaseURL: 'https://ibm-ecxio.slack.com/services/hooks/jenkins-ci/',
+                      teamDomain: 'ibm-ecxio',
+                      isBotUser: false,
+                      errorRecipients: '<@christian.schimanski><@silvio.papac>']
+
+def projectSettings = [ sourcecodeFolder: '',
+                        brands: 
+                        [
+                          [ 
+                            name: 'Fiskars',
+                            gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-fiskars-cms.git'
+                          ],
+                          [ 
+                            name: 'Gerber',
+                            gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-gerber-cms.git'
+                          ],
+                          [
+                            name: "Waterford",
+                            gitRepo: "https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-waterford-cms.git"
+                          ],
+                          [
+                            name: "Wedgwood",
+                            gitRepo: "https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-wedgwood-cms.git"
+                          ],
+                          [
+                            name: "RoyalDoulton",
+                            gitRepo: "https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-royaldoulton-cms.git"
+                          ]
+                        ]
+                      ]
+
+def lib = library('helper').io.ecx
+def ecxHelper = lib.ECXHelperWindows.new(this)
+def errors = lib.errors.ErrorHandler.new(this)
+def errorMessage = ''
+def jsonData = ''
+def nodeNames = ["master"]
+
+try
+{
+  stage('Clean & Init')
+  {
+    env.STAGE_NAME = 'Clean & Init'
+    node('master')
+    {
+      try
+      {
+        wrap([$class: 'BuildUser'])
+        {
+          env.userFullName = "${BUILD_USER}"
+        }
+      }
+      catch (Exception ex)
+      {
+        env.userFullName = "Jenkins"
+      }
+      if (slackSettings.enableSlackNotification)
+      {
+        slackSend teamDomain: "${slackSettings.teamDomain}", botUser: slackSettings.isBotUser, tokenCredentialId: "${slackSettings.slackTokenID}", channel: "${slackSettings.slackChannel}", message: "${env.JOB_NAME}: started by user: ${env.userFullName}\n (<${env.RUN_DISPLAY_URL}|Open>)"
+      }
+
+      ecxHelper.cleanUp()
+      dir('pipeline')
+      {
+        git branch: "master", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+        load "tools.groovy"
+      }
+    }
+  }
+
+  stage('Build and Copy')
+  {
+    env.STAGE_NAME = 'Build and Copy'
+    def branches = [:]
+    projectSettings.brands.each
+    { brand ->
+      def brandNameVar = brand.name
+      def brandGitRepoVar = brand.gitRepo
+      branches["Frontend ${brandNameVar}"] =
+      {
+        node("master")
+        {
+          dir('pipeline')
+          {
+            git branch: "${gitSettings.pipelineGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+            load "tools.groovy"
+          }
+          def sourcecodeCore = ''
+          dir('sourcecode')
+          {
+            sourcecodeCore = ecxHelper.getCurrentDirectory()
+            git branch: "${gitSettings.defaultGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.defaultGitRepo}"
+            jsonData = readJSON file: "sc/src/Project/Core/build-config.json"
+          }
+          dir("sourcecode_${brandNameVar}")
+          {
+            git branch: "${gitSettings.defaultGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${brandGitRepoVar}"
+          }
+          dir("sourcecode_${brandNameVar}/sc")
+          {
+            ecxHelper.mavenCommand("clean test -P htmlpreview -DcoreProjectPath=${sourcecodeCore}")
+
+          }
+          dir("sourcecode_${brandNameVar}/sc/htmldummy")
+          {
+            stash includes: "**/**", name: "stashFrontendFiles_${brandNameVar}"
+          }
+        }
+        node("master")
+        {
+          dir("/var/www/html/brands/${brandNameVar}")
+          {
+            unstash "stashFrontendFiles_${brandNameVar}"
+          }
+        }
+      }
+    }
+    parallel branches
+  }
+}
+catch (Exception exception)
+{
+  errorMessage = exception.getMessage()
+  errorMessage = "${slackSettings.errorRecipients}\n${errorMessage}"
+  errors.defaultHandler(exception, slackSettings)
+}
+finally
+{
+  stage('Finalisation')
+  {
+    ecxHelper.defaultFinalisation(nodeNames, errorMessage, slackSettings)
+  }
+}

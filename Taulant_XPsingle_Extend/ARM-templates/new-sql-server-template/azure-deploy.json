@@ -1,0 +1,112 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2014-04-01-preview/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "variables": {
+      "dbApiVersion": "2014-04-01-preview",
+      "sitecoreTags": {
+        "provider": "test-tag",
+        "core": "core"
+      }
+    },
+    "parameters": {
+      "serverName": {
+        "type": "string"
+      },
+      "serverLocation": {
+        "type": "string"
+      },
+      "sqlServerVersion": {
+        "type": "string",
+        "minLength": 1,
+        "defaultValue": "12.0"
+      },
+      "sqlServerLogin": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sqlServerPassword": {
+        "type": "securestring",
+        "minLength": 8
+      },
+      "sitecoreSKU": {
+        "type": "string",
+        "allowedValues": [ "Extra Small", "Small", "Medium", "Large", "Extra Large" ],
+        "defaultValue": "Extra Small",
+        "metadata": {
+          "description": "Sitecore SKU controls the sizes and service levels of the provisioned resources"
+        }
+      },
+      "skuMap": {
+        "type": "secureObject",
+        "defaultValue": {
+          "Extra Small": {
+            "coreSqlDatabase": {
+              "Edition": "Standard",
+              "MaxSize": "268435456000",
+              "ServiceObjectiveLevel": "S1"
+            }
+          },
+          "Small": {
+            "coreSqlDatabase": {
+              "Edition": "Standard",
+              "MaxSize": "268435456000",
+              "ServiceObjectiveLevel": "S1"
+            }
+          },
+          "Medium": {
+            "coreSqlDatabase": {
+              "Edition": "Standard",
+              "MaxSize": "268435456000",
+              "ServiceObjectiveLevel": "S1"
+            }
+          },
+          "Large": {
+            "coreSqlDatabase": {
+              "Edition": "Standard",
+              "MaxSize": "268435456000",
+              "ServiceObjectiveLevel": "S1"
+            }
+          },
+          "Extra Large": {
+            "coreSqlDatabase": {
+              "Edition": "Standard",
+              "MaxSize": "268435456000",
+              "ServiceObjectiveLevel": "S1"
+            }
+          }
+        }
+      },
+      "resourceSizes": {
+        "type": "object",
+        "defaultValue": "[parameters('skuMap')[parameters('sitecoreSKU')]]"
+      }
+    },
+    "resources": [
+      {
+        "type": "Microsoft.Sql/servers",
+        "apiVersion": "[variables('dbApiVersion')]",
+        "properties": {
+          "administratorLogin": "[parameters('sqlServerLogin')]",
+          "administratorLoginPassword": "[parameters('sqlServerPassword')]",
+          "version": "[parameters('sqlServerVersion')]"
+        },
+        "name": "[parameters('serverName')]",
+        "location": "[parameters('serverLocation')]",
+        "tags": {
+          "provider": "[variables('sitecoreTags').provider]"
+        },
+        "resources": [
+          {
+            "type": "firewallrules",
+            "apiVersion": "[variables('dbApiVersion')]",
+            "properties": {
+              "endIpAddress": "0.0.0.0",
+              "startIpAddress": "0.0.0.0"
+            },
+            "name": "AllowAllAzureIps",
+            "dependsOn": [ "[resourceId('Microsoft.Sql/servers', parameters('serverName'))]" ]
+          }       
+        ]
+      }
+    ]
+  }

@@ -1,0 +1,499 @@
+#!groovy
+def nexusSettings = [ nexusGroupID: 'FISKARS',
+                      repositoryUrl: '/content/repositories/Releases/',
+                      nexusBaseUrl: 'http://192.168.12.14:8081/nexus']
+def gitSettings = [ defaultGitUserCredID: 'git-user',
+                    defaultGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms.git',
+                    defaultGitBranch: 'develop',
+                    pipelineGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-deploy-cms.git',
+                    pipelineGitBranch: 'master']
+def slackSettings = [ enableSlackNotification: true,
+                      slackTokenID: 'slacktoken_Fiskars',
+                      slackChannel: 'fiskars_jenkins',
+                      slackBaseURL: 'https://ibm-ecxio.slack.com/services/hooks/jenkins-ci/',
+                      teamDomain: 'ibm-ecxio',
+                      isBotUser: false,
+                      errorRecipients: '<@taulant.racaj1>']
+def msbuildSettings = [ nugetPath: 'C:\\tools\\nuget.exe',
+                        codeCoverageBuildPath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\TestAgent\\Team Tools\\Dynamic Code Coverage Tools\\CodeCoverage.exe',
+                        msbuildPath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\BuildTools\\MSBuild\\15.0\\Bin\\msbuild.exe',
+                        mstestConsolePath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\TestAgent\\Common7\\IDE\\CommonExtensions\\Microsoft\\TestWindow\\vstest.console.exe',
+                        vsToolsPath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\BuildTools\\MSBuild\\Microsoft\\VisualStudio\\v15.0',
+                        msdeployPath: 'C:\\Program Files (x86)\\IIS\\Microsoft Web Deploy V3\\msdeploy.exe']
+def globalSettings = [  userInputTimeout: 260000,
+                        extendedMessageInfo: '']
+def projectSettings = [
+  sourcecodeFolder: '',
+  buildServerNode: 'BUILD DEV',
+  tdsBuildTarget: 'StgTDS',
+  core: [
+    name: 'Core',
+    gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms.git',
+    artifactId: 'Core'
+  ],
+  brands: [
+    [
+      name: 'Fiskars',
+      gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-fiskars-cms.git',
+      artifactId: 'Brand_Fiskars'
+    ],
+    [
+      name: 'Gerber',
+      gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-gerber-cms.git',
+      artifactId: 'Brand_Gerber'
+    ]
+  ]
+]
+
+def azureSettings = [
+  servicePrincipal: [
+    appService: 'OneD_ECX_ServicePrincipal',
+    storageService: ''
+  ],
+  trafficManager: [
+    profileName: 'NE-OneD-TM-Stg',
+    resourceGroupName: 'RG-SE-IN-NE-Test03-OneD',
+    dnsTtl: 360
+  ],
+  environments: [
+    CD: [
+      name: 'CD',
+      resourceGroupName: 'RG-SE-IN-NE-Test03-OneD',
+      appServiceName: 'ne-oned-cd-stg',
+      publishSettings: 'D:\\Deployment\\Azure\\STG\\ne-oned-cd-stg.PublishSettings',
+      baselineFolder: 'D:\\Deployment\\Azure\\STG\\ne-oned-cd-stg.baseline',
+      configFolder: 'configs\\ne-oned-cd-stg',
+      ftp: [
+        userName: 'fiskarsInt\\sitecoreFtpUserJenkins',
+        password: 'X2q9DnPkeLvSHZSXoygqC2atbEyhBb5LCEgxRhTRdKhnkJxTMycnwF3Wglor'
+      ],
+      trafficManagerEndpointName: 'ne-oned-appgw-stg.northeurope.cloudapp.azure.com'
+    ],
+    CDCU: [
+      name: 'CDCU',
+      resourceGroupName: 'RG-SE-IN-CU-Test03-OneD',
+      appServiceName: 'cu-oned-cd-stg',
+      publishSettings: 'D:\\Deployment\\Azure\\STG\\cu-oned-cd-stg.PublishSettings',
+      baselineFolder: 'D:\\Deployment\\Azure\\STG\\cu-oned-cd-stg.baseline',
+      configFolder: 'configs\\cu-oned-cd-stg',
+      ftp: [
+        userName: 'fiskarsInt\\sitecoreFtpUserJenkins',
+        password: 'X2q9DnPkeLvSHZSXoygqC2atbEyhBb5LCEgxRhTRdKhnkJxTMycnwF3Wglor'
+      ],
+      trafficManagerEndpointName: 'cu-oned-appgw-stg.centralus.cloudapp.azure.com'
+    ],
+    CM: [
+      name: 'CM',
+      resourceGroupName: 'RG-SE-IN-NE-Test03-OneD',
+      appServiceName: 'ne-oned-cm-stg',
+      publishSettings: 'D:\\Deployment\\Azure\\STG\\ne-oned-cm-stg.PublishSettings',
+      baselineFolder: 'D:\\Deployment\\Azure\\STG\\ne-oned-cm-stg.baseline',
+      configFolder: 'configs\\ne-oned-cm-stg',
+      ftp: [
+        userName: 'fiskarsInt\\sitecoreFtpUserJenkins',
+        password: 'X2q9DnPkeLvSHZSXoygqC2atbEyhBb5LCEgxRhTRdKhnkJxTMycnwF3Wglor'
+      ]
+    ]
+  ]
+]
+
+lib = library('helper').io.ecx
+ecxHelper = lib.ECXHelperWindows.new(this)
+errors = lib.errors.ErrorHandler.new(this)
+azureUtils = lib.utils.azure.AzureUtils.new(this)
+
+nodeNames = ["master", "${projectSettings.buildServerNode}"]
+errorMessage = ''
+
+try
+{
+  stage('Interaction')
+  {
+    env.STAGE_NAME = 'Interaction'
+    node('master')
+    {
+      def startMillis = System.currentTimeMillis()
+
+      try
+      {
+        timeout(time: globalSettings.userInputTimeout, unit: 'MILLISECONDS')
+        {
+          def deploymentTargetChoices = []
+          azureSettings.environments.each { environment ->
+            deploymentTargetChoices << booleanParam(defaultValue: false, name: environment.value.name)
+          }
+          userInputDeploymentTargets = input(
+            id: 'userInputDeploymentTargets',
+            message: 'Please choose environments for deployment',
+            parameters: deploymentTargetChoices)
+
+          userInputCdTrafficManagerActions = [:]
+          azureSettings.environments.each { environment ->
+            if (environment.value.trafficManagerEndpointName != null)
+            {
+              def userInputCdTrafficManagerAction = input(
+                id: 'userInputCdTrafficManagerBehaviour',
+                message: "Please define Traffic Manager action for '${environment.value.name}'",
+                parameters: [
+                  [$class: 'ChoiceParameterDefinition', choices: 'Ignore\nEnable\nDisable', description: '', name: 'cdTrafficManagerBehaviour']
+                ]
+              )
+              userInputCdTrafficManagerActions[environment.value.name] = userInputCdTrafficManagerAction
+            }
+          }
+
+          if (userInputDeploymentTargets.any{ it.value })
+          {
+            def brandSelectionList = []
+            projectSettings.brands.each { brand ->
+              brandSelectionList << booleanParam(defaultValue: false, name: "${brand.name}")
+            }
+            userInputBrandSelection = input(message: 'Choose Brands for deployment', parameters: brandSelectionList)
+
+            def lastUsedBranch = "${gitSettings.defaultGitBranch}"
+            def fileAvailable = fileExists "${env.WORKSPACE}/../last_used_inputbranch_${env.JOB_NAME}.txt"
+            if (fileAvailable)
+            {
+              lastUsedBranch = readFile "${env.WORKSPACE}/../last_used_inputbranch_${JOB_NAME}.txt"
+            }
+            userInputBranch = input(
+              id: 'userInputBranch',
+              message: 'Please enter Branch Name for TDS deploy from',
+              parameters: [
+                string(defaultValue: "${lastUsedBranch}", description: "eg: \"feature/xyz\" or \"hotfix/bla\" or simply \"develop\" branch", name: 'userInputBranch', trim: true)
+              ])
+            if (!userInputBranch.matches("^release\\/release[0-9\\.]{1,}|hotfix\\/hotfix[0-9\\.]{1,}|develop")) {
+              error('error_illegal_version')
+            }
+            fileOperations([fileCreateOperation(fileContent: "${userInputBranch}", fileName: "../last_used_inputbranch_${JOB_NAME}.txt")])
+
+            def brandCoreChoices = []
+            projectSettings.brands.each { brand ->
+              userInputBrandSelection.each { key, value ->
+                if (brand.name == key && value)
+                {
+                  brandCoreChoices << [ name: brand.name, artifactId: brand.artifactId, gitRepo: brand.gitRepo ]
+                }
+              }
+            }
+            brandCoreSelection = []
+            userInputBrandCoreVersions = []
+            brandCoreChoices << [ name: 'Core', artifactId: 'Core', gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms.git']
+            brandCoreChoices.each { brandOrCore ->
+              latestVersion = ecxHelper.getLatestVersionFromNexus("${nexusSettings.nexusBaseUrl}${nexusSettings.repositoryUrl}", "${nexusSettings.nexusGroupID}", "${brandOrCore.artifactId}")
+              latestVersions = ecxHelper.getLatestVersionsFromNexus("${nexusSettings.nexusBaseUrl}${nexusSettings.repositoryUrl}", "${nexusSettings.nexusGroupID}", "${brandOrCore.artifactId}", 5)
+
+              def userInputReleaseVersion = input(
+                id: 'userInputReleaseVersion',
+                message: "Please enter Release Version for ${brandOrCore.name}",
+                parameters: [
+                  string(defaultValue: "${latestVersion}", description: "Latest version in Nexus is:\n${latestVersion}\nTop 5 latest Versions are:\n${latestVersions}", name: 'ReleaseVersion', trim: true)
+                ])
+              if (!userInputReleaseVersion.matches("^\\d{1,}\\.\\d{1,}\\.\\d{1,}\\.\\d{1,}(\\.\\d{1,})?-RELEASE|\\d{1,}\\.\\d{1,}\\.\\d{1,}\\.\\d{1,}(\\.\\d{1,})?-HOTFIX"))
+              {
+                error('error_illegal_version')
+              }
+
+              def lastUsedtdsBranch = "${gitSettings.defaultGitBranch}"
+              def filetdsAvailable = fileExists "${env.WORKSPACE}/../last_used_inputbranch_${brandOrCore.name}_${env.JOB_NAME}.txt"
+              if (filetdsAvailable)
+              {
+                lastUsedtdsBranch = readFile "${env.WORKSPACE}/../last_used_inputbranch_${brandOrCore.name}_${JOB_NAME}.txt"
+              }
+
+              def userInputTdsbranch = input(
+                id: 'userInputTdsbranch',
+                message: "Please enter branch for tds for brand ${brandOrCore.name}",
+                parameters: [
+                  string(defaultValue: "${lastUsedtdsBranch}", description: "eg: \"feature/xyz\" or \"hotfix/bla\" or simply \"develop\" branch", name: 'TdsBranch', trim: true)
+                ])
+              if (!userInputTdsbranch.matches("^release\\/release[0-9\\.]{1,}|hotfix\\/hotfix[0-9\\.]{1,}|develop"))
+              {
+                error('error_illegal_version')
+              }
+              fileOperations([fileCreateOperation(fileContent: "${userInputTdsbranch}", fileName: "../last_used_inputbranch_${brandOrCore.name}_${JOB_NAME}.txt")])
+
+              brandCoreSelection << [artifactId: brandOrCore.artifactId, version: userInputReleaseVersion, name: brandOrCore.name, gitBranch: userInputTdsbranch, gitRepo: brandOrCore.gitRepo]
+              userInputBrandCoreVersions << [name: brandOrCore.name, version: userInputReleaseVersion]
+            }
+          }
+        }
+
+        globalSettings.extendedMessageInfo += "Deployment target(s): ${userInputDeploymentTargets}\n"
+        globalSettings.extendedMessageInfo += "CD Traffic Manager action(s): ${userInputCdTrafficManagerActions}\n"
+        if (binding.hasVariable('userInputBranch')) globalSettings.extendedMessageInfo += "TDS branch: ${userInputBranch}\n"
+        if (binding.hasVariable('userInputBrandCoreVersions')) globalSettings.extendedMessageInfo += "Brand(s)/Core Version(s): ${userInputBrandCoreVersions}\n"
+        if (slackSettings.enableSlackNotification)
+        {
+          slackSend teamDomain: "${slackSettings.teamDomain}", botUser: slackSettings.isBotUser, tokenCredentialId: "${slackSettings.slackTokenID}", channel: "${slackSettings.slackChannel}", message: "${globalSettings.extendedMessageInfo}\n (<${env.RUN_DISPLAY_URL}|Open>)"
+        }
+      }
+      catch (Exception exception)
+      {
+        if (System.currentTimeMillis() - startMillis >= globalSettings.userInputTimeout)
+        {
+          error('error_input_timeout')
+        }
+        throw exception
+      }
+    }
+  }
+
+  stage('Clean & Init')
+  {
+    env.STAGE_NAME = 'Clean & Init'
+    node('master')
+    {
+      try
+      {
+        wrap([$class: 'BuildUser'])
+        {
+          env.userFullName = "${BUILD_USER}"
+        }
+      }
+      catch (Exception e)
+      {
+        env.userFullName = "Jenkins"
+      }
+      if (slackSettings.enableSlackNotification)
+      {
+        slackSend teamDomain: "${slackSettings.teamDomain}", botUser: slackSettings.isBotUser, tokenCredentialId: "${slackSettings.slackTokenID}", channel: "${slackSettings.slackChannel}", message: "${env.JOB_NAME}: started by user: ${env.userFullName}\n (<${env.RUN_DISPLAY_URL}|Open>)"
+      }
+    }
+    def branches = [:]
+    nodeNames.each { nodeName ->
+      def nodeNameVar = nodeName
+      branches["${nodeNameVar}"] =
+      {
+        node("${nodeNameVar}")
+        {
+          ecxHelper.cleanUp()
+        }
+      }
+    }
+    parallel branches
+  }
+
+  stage('Perform Traffic Manager Actions')
+  {
+    if (userInputCdTrafficManagerActions.any{ it.value != 'Ignore' })
+    {
+      def status = 0
+      node ("${projectSettings.buildServerNode}")
+      {
+        withCredentials([azureServicePrincipal("${azureSettings.servicePrincipal.appService}")])
+        {
+          userInputCdTrafficManagerActions.each { environmentName, action ->
+            def trafficManagerEndpointName = azureSettings.environments[environmentName].trafficManagerEndpointName
+            if (action == 'Enable')
+            {
+              status += azureUtils.trafficManager.enableEndpoint("${azureSettings.trafficManager.profileName}", "${trafficManagerEndpointName}", "${azureSettings.trafficManager.resourceGroupName}", "$AZURE_CLIENT_ID", "$AZURE_CLIENT_SECRET", "$AZURE_TENANT_ID")
+            }
+            else if (action == 'Disable')
+            {
+              status += azureUtils.trafficManager.disableEndpoint("${azureSettings.trafficManager.profileName}", "${trafficManagerEndpointName}", "${azureSettings.trafficManager.resourceGroupName}", "$AZURE_CLIENT_ID", "$AZURE_CLIENT_SECRET", "$AZURE_TENANT_ID")
+            }
+          }
+        }
+      }
+      if (status != 0)
+      {
+        throw new Exception()
+      }
+      if (userInputDeploymentTargets.any{ it.value } && userInputCdTrafficManagerActions.any{ it.value == 'Disable' })
+      {
+        echo "==============================> Waiting ${azureSettings.trafficManager.dnsTtl} seconds for Traffic Manager endpoints switch <=============================="
+        sleep(azureSettings.trafficManager.dnsTtl)
+      }
+    }
+    else
+    {
+      ecxHelper.markStageAsSkipped('Perform Traffic Manager Actions')
+    }
+  }
+
+  stage('Deploy Zip to AppServices')
+  {
+    if (userInputDeploymentTargets.any{ it.value })
+    {
+      def status = 0
+      def zipdir = ''
+      node ("${projectSettings.buildServerNode}")
+      {
+        withCredentials([azureServicePrincipal("${azureSettings.servicePrincipal.appService}")])
+        {
+          userInputDeploymentTargets.each { environmentName, deploy ->
+            if (deploy)
+            {
+              def environment = azureSettings.environments[environmentName]
+              status += azureUtils.azAppService.stopAppService("${environment.appServiceName}", "${environment.resourceGroupName}", "$AZURE_CLIENT_ID", "$AZURE_CLIENT_SECRET", "$AZURE_TENANT_ID")
+            }
+          }
+        }
+        if (status != 0)
+        {
+          throw new Exception()
+        }
+
+        dir('pipeline')
+        {
+          git branch: "${gitSettings.pipelineGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+          load "tools.groovy"
+        }
+
+        dir('sourcecode')
+        {
+          git branch: "${userInputBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.defaultGitRepo}"
+          projectSettings.sourcecodeFolder = ecxHelper.getCurrentDirectory()
+        }
+
+        zipdir = ecxHelper.getCurrentDirectory()
+        //custom implementation to purge the local fiskars repo in order to refresh packages if they were overwritten on nexus
+        dir("C:\\Users\\jenkinsuser\\.m2\\repository\\FISKARS")
+        {
+          fileOperations([fileDeleteOperation(excludes: '', includes: '**/**')])
+        }
+        brandCoreSelection.each { brandOrCore ->
+          ecxHelper.nexusRetrieve("${nexusSettings.nexusBaseUrl}${nexusSettings.repositoryUrl}", "${nexusSettings.nexusGroupID}", "${brandOrCore.artifactId}", "${brandOrCore.version}", "${zipdir}", "zip")
+        }
+      }
+
+      def deployments = [:]
+      userInputDeploymentTargets.each { environmentName, deploy ->
+        if (deploy)
+        {
+          deployments["${environmentName}"] =
+          {
+            node ("${projectSettings.buildServerNode}")
+            {
+              def environment = azureSettings.environments[environmentName]
+              def tempUnzipFolder = ''
+              dir('unzippedfiles')
+              {
+                tempUnzipFolder = ecxHelper.getCurrentDirectory()
+              }
+              dir("${environment.baselineFolder}")
+              {
+                fileOperations([fileCopyOperation(excludes: "*.zip", includes: "**/**", targetLocation: "${tempUnzipFolder}")])
+              }
+              dir("${tempUnzipFolder}")
+              {
+                status += azureUtils.webDeployViaMsDeployTest("${tempUnzipFolder}\\App_Config", "D:\\home\\site\\wwwroot\\App_Config", "${msbuildSettings.msdeployPath}", "${environment.publishSettings}")
+                status += azureUtils.webDeployViaMsDeployTest("${tempUnzipFolder}\\bin", "D:\\home\\site\\wwwroot\\bin", "${msbuildSettings.msdeployPath}", "${environment.publishSettings}")
+                status += azureUtils.webDeployViaMsDeployTest("${tempUnzipFolder}\\Views", "D:\\home\\site\\wwwroot\\Views", "${msbuildSettings.msdeployPath}", "${environment.publishSettings}")
+              }
+              brandCoreSelection.each { brandOrCore ->
+                unzip dir: "${tempUnzipFolder}", glob: "", zipFile: "${zipdir}\\${brandOrCore.artifactId}-${brandOrCore.version}.zip"
+              }
+              dir("${tempUnzipFolder}")
+              {
+                //cleanup for packages
+                fileOperations([fileDeleteOperation(excludes: '', includes: 'App_Config/Include/SiteDefinition.config')])
+                fileOperations([fileDeleteOperation(excludes: '', includes: 'App_Config/ConnectionStrings.config')])
+                fileOperations([fileDeleteOperation(excludes: '', includes: 'Web.config')])
+              }
+              dir("${projectSettings.sourcecodeFolder}\\${environment.configFolder}")
+              {
+                fileOperations([fileCopyOperation(excludes: "", includes: "**/**", targetLocation: "${tempUnzipFolder}")])
+              }
+              dir("${tempUnzipFolder}")
+              {
+                zip dir: "", glob: "", zipFile: "${zipdir}\\${environment.appServiceName}.zip"
+              }
+              status += azureUtils.webDeployViaMsDeploy("${zipdir}", "${environment.appServiceName}.zip", "${msbuildSettings.msdeployPath}", "${environment.publishSettings}")
+              if (status != 0)
+              {
+                throw new Exception()
+              }
+            }
+          }
+        }
+      }
+      parallel deployments
+
+      node ("${projectSettings.buildServerNode}")
+      {
+        withCredentials([azureServicePrincipal("${azureSettings.servicePrincipal.appService}")])
+        {
+          userInputDeploymentTargets.each { environmentName, deploy ->
+            if (deploy)
+            {
+              def environment = azureSettings.environments[environmentName]
+              azureUtils.azAppService.startAppService("${environment.appServiceName}", "${environment.resourceGroupName}", "$AZURE_CLIENT_ID", "$AZURE_CLIENT_SECRET", "$AZURE_TENANT_ID")
+            }
+          }
+        }
+      }
+    }
+    else
+    {
+      ecxHelper.markStageAsSkipped('Deploy Zip to AppServices')
+    }
+  }
+
+  stage('Deploy TDS')
+  {
+    if (userInputDeploymentTargets['CM'])
+    {
+      node ("${projectSettings.buildServerNode}")
+      {
+        retry(30)
+        {
+          httpRequest url:"https://${azureSettings.environments.CM.appServiceName}.azurewebsites.net/_DEV/TdsService.asmx", timeout: 120
+        }
+        brandCoreSelection.reverse().each { brandOrCore ->
+          dir("sourcecode_${brandOrCore.name}")
+          {
+            git branch: "${brandOrCore.gitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${brandOrCore.gitRepo}"
+          }
+          dir("sourcecode_${brandOrCore.name}\\sc")
+          {
+            def status = ecxHelper.tdsDeploySolution("${msbuildSettings.msbuildPath}", "Fiskars.${brandOrCore.name}.sln", "${projectSettings.tdsBuildTarget}", "${projectSettings.pubxml}", "${msbuildSettings.vsToolsPath}")
+            if (status != 0)
+            {
+              throw new Exception()
+            }
+          }
+        }
+      }
+    }
+    else
+    {
+      ecxHelper.markStageAsSkipped('Deploy TDS')
+    }
+  }
+  stage('Warmup URLS')
+  {
+    node ("master")
+    {
+      dir('pipeline')
+      {
+        git branch: "${gitSettings.pipelineGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+        load "tools.groovy"
+        warmupUrls = readJSON file: "Files/STG/warmup_urls.json"
+
+          warmupUrls.urls.each { url ->
+            try {
+              httpRequest url: "${url}", timeout: 120
+            }
+            catch (Exception exception) {
+              //Silently fail
+            }
+          }
+      }
+    }
+  }
+}
+catch (Exception exception)
+{
+  errorMessage = exception.getMessage()
+  errorMessage = "${slackSettings.errorRecipients}\n${errorMessage}"
+  errors.defaultHandler(exception, slackSettings)
+}
+finally
+{
+  stage('Finalisation')
+  {
+    ecxHelper.defaultFinalisation(nodeNames, errorMessage, slackSettings)
+  }
+}

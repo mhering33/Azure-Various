@@ -1,0 +1,139 @@
+#!groovy
+def gitSettings = [ defaultGitUserCredID: 'git-user',
+                    defaultGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-performance-tests-cms.git',
+                    defaultGitBranch: 'master',
+                    pipelineGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-deploy-cms.git',
+                    pipelineGitBranch: 'master'
+                  ]
+def slackSettings = [ enableSlackNotification: true,
+                      slackTokenID: 'slacktoken_Fiskars',
+                      slackChannel: 'fiskars_jenkins',
+                      slackBaseURL: 'https://ibm-ecxio.slack.com/services/hooks/jenkins-ci/',
+                      teamDomain: 'ibm-ecxio',
+                      isBotUser: false,
+                      errorRecipients: '<@Josip%20Dodos><@matija.popijac>']
+def projectSettings = [ sourcecodeFolder: '',
+                        buildServerNode: 'BUILD DEV',
+                        pubxml: 'D:\\Deployment\\DEV\\DevProfile.pubxml',
+                        websiteconfigfolder: 'configs\\fiskars.dev.sc',
+                        iisWebsitename: 'fiskars.dev.sc',
+                        iisWebsitenameXconnect: 'fiskars.dev.xconnect',
+                        iisWebsitenameidentity: 'fiskars.dev.identityserver',
+                        targetIISWebsitefolder: 'C:\\inetpub\\wwwroot\\fiskars.dev.sc',
+                        targetIISWebsitefolderXconnect: 'C:\\inetpub\\wwwroot\\fiskars.dev.xconnect',
+                        websiteBaselinefolder: 'D:\\Deployment\\DEV\\fiskars.dev.sc.baseline',
+                        websiteBaselinefolderXconnect: 'D:\\Deployment\\DEV\\fiskars.dev.xconnect.baseline',
+                        xconnectAutomationServiceName: 'fiskars.dev.xconnect-MarketingAutomationService',
+                        xconnectIndexingWorkerServiceName: 'fiskars.dev.xconnect-IndexWorker',
+                        xconnectProcessingEngineServiceName: 'fiskars.dev.xconnect-ProcessingEngineService',
+                        solrServiceName: 'solr721',
+                        sqlServer: [
+                                hostname: '(local)',
+                                dbuser: 'sa',
+                                dbpasswd: 'zk2EZF4kLLqCImjBlGjT',
+                                backupFilePathCore: 'D:\\Deployment\\DEV\\fiskars.dev_Core.baseline.bak',
+                                backupDbNameCore: 'fiskars.dev_Core',
+                                backupFilePathMaster: 'D:\\Deployment\\DEV\\fiskars.dev_Master.baseline.bak',
+                                backupDbNameMaster: 'fiskars.dev_Master'
+                        ],
+                        brands: [
+                          [ name: 'Fiskars',
+                            gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-fiskars-cms.git']
+                        ]
+                      ]
+
+def lib = library('helper').io.ecx
+def ecxHelper = lib.ECXHelperWindows.new(this)
+def errors = lib.errors.ErrorHandler.new(this)
+def parser = lib.utils.ParseUtils.new(this)
+def sonarUtils = lib.utils.sonar.SonarUtils.new(this)
+def errorMessage = ''
+def jsonData = ''
+
+def nodeNames = ["master","${projectSettings.buildServerNode}"]
+
+try
+{
+  stage('Clean & Init')
+  {
+    env.STAGE_NAME = 'Clean & Init'
+    node('master')
+    {
+      try
+      {
+        wrap([$class: 'BuildUser'])
+        {
+          env.userFullName = "${BUILD_USER}"
+        }
+      }
+      catch (Exception ex)
+      {
+        env.userFullName = "Jenkins"
+      }
+      if (slackSettings.enableSlackNotification)
+      {
+        slackSend teamDomain: "${slackSettings.teamDomain}", botUser: slackSettings.isBotUser, tokenCredentialId: "${slackSettings.slackTokenID}", channel: "${slackSettings.slackChannel}", message: "${env.JOB_NAME}: started by user: ${env.userFullName}\n (<${env.RUN_DISPLAY_URL}|Open>)"
+      }
+    }
+    def branches = [:]
+    nodeNames.each { nodeName ->
+      def nodeNameVar = nodeName
+      branches["${nodeNameVar}"] =
+      {
+        node("${nodeNameVar}")
+        {
+          ecxHelper.cleanUp()
+          if (nodeNameVar.equals("master"))
+          {
+            dir('pipeline')
+            {
+              git branch: "${gitSettings.pipelineGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+              load "tools.groovy"
+            }
+            dir('sourcecode')
+            {
+              git branch: "${gitSettings.defaultGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.defaultGitRepo}"
+              projectSettings.sourcecodeFolder = ecxHelper.getCurrentDirectory()
+            }
+          }
+          else
+          {
+            dir('pipeline')
+            {
+                git branch: "${gitSettings.pipelineGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+                //load "tools.groovy"
+            }
+            
+          }
+        }
+      }
+    }
+    parallel branches
+  }
+
+  stage('JMeter Tests')
+  {
+    node ("master")
+    {
+        dir("${projectSettings.sourcecodeFolder}")
+        {
+            ecxHelper.mavenCommand("verify -P profile-dev")
+            performanceReport compareBuildPrevious: false, configType: 'ART', errorFailedThreshold: 50, errorUnstableResponseTimeThreshold: '', errorUnstableThreshold: 25, failBuildIfNoResultFile: false, modeOfThreshold: false, modePerformancePerTestCase: true, modeThroughput: false, nthBuildNumber: 0, parsers: [[$class: 'JMeterParser', glob: 'target/jmeter/results/*.csv']], relativeFailedThresholdNegative: 0, relativeFailedThresholdPositive: 0, relativeUnstableThresholdNegative: 0, relativeUnstableThresholdPositive: 0
+            publishHTML([allowMissing: true, alwaysLinkToLastBuild: false, keepAll: true, reportDir: "target/jmeter/reports/FiskarsQAEnvTest", reportFiles: 'index.html', reportName: 'HTML Report'])
+        }
+    }
+  }
+}
+catch (Exception exception)
+{
+  errorMessage = exception.getMessage()
+  errorMessage = "${slackSettings.errorRecipients}\n${errorMessage}"
+  errors.defaultHandler(exception, slackSettings)
+}
+finally
+{
+  stage('Finalisation')
+  {
+    ecxHelper.defaultFinalisation(nodeNames, errorMessage, slackSettings)
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "deploymentId": {
+      "value": "fiskars14"
+    },
+    "location": {
+      "value": "North Europe"
+    },
+    "sitecoreAdminPassword": {
+      "value": "S!te3ore2020"
+    },
+    "licenseXml": {
+      "value": "C:\\Projects\\Fiskars\\install\\license.xml"
+    },
+    "sqlServerLogin": {
+      "value": "sitecoreLogin"
+    },
+    "sqlServerPassword": {
+      "value": "!jdflkj09x8t98!"
+    },
+    "siMsDeployPackageUrl": {
+      "value": "https://scdeploymentstoragetau.blob.core.windows.net/sitecore92wdpscaled/Sitecore92/Sitecore.IdentityServer.4.0.0-r00257.scwdp.zip?st=2020-02-28T12%3A40%3A59Z&se=2028-12-31T12%3A40%3A00Z&sp=rwl&sv=2018-03-28&sr=b&sig=aogVyRV7dyecnN6FZYWDhft8KQVHHWAXNeYkXqvc6rE%3D"
+    },
+    "singleMsDeployPackageUrl": {
+      "value": "https://scdeploymentstoragetau.blob.core.windows.net/sitecore92wdpscaled/Sitecore92/Sitecore%209.2.0%20rev.%20002893%20(Cloud)_single.scwdp.zip?st=2020-02-28T12%3A41%3A30Z&se=2028-12-31T12%3A41%3A00Z&sp=rwl&sv=2018-03-28&sr=b&sig=NFBKJSDzutQ%2FAnkCit9fH%2BLTpb4g23fNn7Zqv3zi7Dc%3D"																																																																			 
+    },
+	"cdMsDeployPackageUrl": {
+      "value": "https://scdeploymentstoragetau.blob.core.windows.net/sitecore92wdpscaled/Sitecore92/Sitecore%209.2.0%20rev.%20002893%20(Cloud)_cd.scwdp.zip?st=2020-02-28T12%3A42%3A36Z&se=2028-12-31T12%3A42%3A00Z&sp=rwl&sv=2018-03-28&sr=b&sig=gRIYURMyrFg%2B5AzYOBqK2WyOvFXrlPnBF4KOh4h8QOo%3D"
+    },
+    "xcSingleMsDeployPackageUrl": {
+      "value": "https://scdeploymentstoragetau.blob.core.windows.net/sitecore92wdpscaled/Sitecore92/Sitecore%209.2.0%20rev.%20002893%20(Cloud)_xp0xconnectsolr.scwdp.zip?st=2020-02-28T12%3A44%3A28Z&se=2028-12-31T12%3A44%3A00Z&sp=rwl&sv=2018-03-28&sr=b&sig=%2BXMa2OjY%2B7522MMZwWsCZBL6U4REjwmiWPF3mG9TdHE%3D"
+    },
+    "authCertificateBlob": {
+      "value": ""
+    },
+    "authCertificatePassword": {
+      "value": "fiskars@2020"
+    },
+	"allowInvalidClientCertificates": {
+      "value": true
+    },
+    "solrConnectionString": {
+      "value": "https://fiskars-solr-intt.northeurope.cloudapp.azure.com:8983/solr"
+    },
+	"environmentType": {
+	  "value": "Integration"
+	}	
+  }
+}

@@ -1,0 +1,280 @@
+#!groovy
+def nexusSettings = [ nexusGroupID: 'FISKARS',
+                      repositoryUrl: '/content/repositories/Releases/',
+                      nexusBaseUrl: 'http://192.168.12.14:8081/nexus']
+def gitSettings = [ defaultGitUserCredID: 'git-user',
+                    defaultGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms.git',
+                    defaultGitBranch: 'develop',
+                    pipelineGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-deploy-cms.git',
+                    pipelineGitBranch: 'master']
+def slackSettings = [ enableSlackNotification: false,
+                      slackTokenID: 'slacktoken_Fiskars',
+                      slackChannel: 'fiskars_jenkins',
+                      slackBaseURL: 'https://ibm-ecxio.slack.com/services/hooks/jenkins-ci/',
+                      teamDomain: 'ibm-ecxio',
+                      isBotUser: false,
+                      errorRecipients: '']
+def msbuildSettings = [ nugetPath: 'C:\\tools\\nuget.exe',
+                        codeCoverageBuildPath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\TestAgent\\Team Tools\\Dynamic Code Coverage Tools\\CodeCoverage.exe',
+                        msbuildPath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\BuildTools\\MSBuild\\15.0\\Bin\\msbuild.exe',
+                        mstestConsolePath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\TestAgent\\Common7\\IDE\\CommonExtensions\\Microsoft\\TestWindow\\vstest.console.exe',
+                        vsToolsPath: 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\BuildTools\\MSBuild\\Microsoft\\VisualStudio\\v15.0',
+                        msdeployPath: 'C:\\Program Files (x86)\\IIS\\Microsoft Web Deploy V3\\msdeploy.exe']
+def globalSettings = [  userInputTimeout: 260000,
+                        extendedMessageInfo: '']
+def projectSettings = [
+  sourcecodeFolder: '',
+  buildServerNode: 'jenkins-slave-dotnet',
+  baselineFolderCM: 'D:\\Deployment\\Azure\\Integration\\ne-oned-cm-int.baseline',
+  baselineFolderCD: 'D:\\Deployment\\Azure\\Integration\\ne-oned-cd-int.baseline',
+  configFolderCM: 'configs\\ne-oned-cm-int',
+  configFolderCD: 'configs\\ne-oned-cd-int',
+  core: [
+          name: 'Core',
+          gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms.git',
+          artifactId: 'Core'
+  ],
+  brands: [
+    [
+      name: 'Fiskars',
+      gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-brand-fiskars-cms.git',
+      artifactId: 'Brand_Fiskars'
+    ]
+  ]
+]
+
+def azureSettings = [
+  servicePrincipal: [
+    appService: 'OneD_ECX_ServicePrincipal',
+    storageService: ''
+  ],
+  resourceGroupName: 'rg-se-in-ne-test03-oned',
+  appServices: [
+    CD: 'test-devops-int',
+    CM: 'test-devops-int'
+  ],
+  publishSettings: [
+    CD: 'D:\\Deployment\\Azure\\Integration\\test-devops-int.PublishSettings',
+    CM: 'D:\\Deployment\\Azure\\Integration\\test-devops-int.PublishSettings'
+  ],
+  ftp: [
+        CD: [
+              ftpUsername: 'fiskarsInt\\sitecoreFtpUserJenkins',
+              ftpPasswd: 'X2q9DnPkeLvSHZSXoygqC2atbEyhBb5LCEgxRhTRdKhnkJxTMycnwF3Wglor']
+          ,
+        CM: [
+              ftpUsername: 'fiskarsInt\\sitecoreFtpUserJenkins',
+              ftpPasswd: 'X2q9DnPkeLvSHZSXoygqC2atbEyhBb5LCEgxRhTRdKhnkJxTMycnwF3Wglor']
+      ]
+]
+
+lib = library('helper').io.ecx
+ecxHelper = lib.ECXHelperWindows.new(this)
+errors = lib.errors.ErrorHandler.new(this)
+azureUtils = lib.utils.azure.AzureUtils.new(this)
+def brandcoreselection = []
+
+jsonData = {}
+nodeNames = ["master","${projectSettings.buildServerNode}"]
+errorMessage = ''
+
+try
+{
+  stage('Interaction')
+  {
+    env.STAGE_NAME = 'Interaction'
+    node('master')
+    {
+      startMillis = System.currentTimeMillis()
+
+      try
+      {
+        timeout(time: globalSettings.userInputTimeout, unit: 'MILLISECONDS')
+        {
+          def brandselection_list = []
+          projectSettings.brands.each { brand ->
+            brandselection_list << booleanParam(defaultValue: false, name: "${brand.name}")
+          }
+          //added dummy because we just have one brand yet - for the type change jenkins bug if theres only one element
+          brandselection_list << booleanParam(defaultValue: false, name: "Dummy")
+          def userInputBrandSelection = input(message: 'Choose Brands for deployment', parameters: brandselection_list)
+
+          def brandCoreChoices = []
+          projectSettings.brands.each { brand ->
+            userInputBrandSelection.each { key, value ->
+              //remove DUMMY when it's not needed anymore
+              if (brand.name.equals(key) && value && !key.equals("Dummy"))
+              {
+                brandCoreChoices  << [ name: brand.name, artifactId: brand.artifactId, gitRepo: brand.gitRepo ]
+              }
+            }
+          }
+          userInputBrandCoreVersions = []
+          brandCoreChoices << [ name: 'Core', artifactId: 'Core', gitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms.git']
+          brandCoreChoices.each { brandOrCore ->
+            latestVersion = ecxHelper.getLatestVersionFromNexus("${nexusSettings.nexusBaseUrl}${nexusSettings.repositoryUrl}", "${nexusSettings.nexusGroupID}", "${brandOrCore.artifactId}")
+            latestVersions = ecxHelper.getLatestVersionsFromNexus("${nexusSettings.nexusBaseUrl}${nexusSettings.repositoryUrl}", "${nexusSettings.nexusGroupID}", "${brandOrCore.artifactId}", 5)
+
+            userInputReleaseVersion = input(
+                    id: 'userInputReleaseVersion',
+                    message: "Please enter Release Version for ${brandOrCore.name}",
+                    parameters: [
+                            string(defaultValue: "${latestVersion}", description: "Latest version in Nexus is:\n${latestVersion}\nTop 5 latest Versions are:\n${latestVersions}", name: 'ReleaseVersion', trim: true)
+                    ]
+            )
+            if (!userInputReleaseVersion.matches("^\\d{1,}\\.\\d{1,}\\.\\d{1,}\\.\\d{1,}(\\.\\d{1,})?-RELEASE|\\d{1,}\\.\\d{1,}\\.\\d{1,}\\.\\d{1,}(\\.\\d{1,})?-HOTFIX"))
+            {
+              error('error_illegal_version')
+            }
+
+            brandcoreselection << [artifactId: brandOrCore.artifactId, version: userInputReleaseVersion, name: brandOrCore.name, gitRepo: brandOrCore.gitRepo]
+            userInputBrandCoreVersions << [name: brandOrCore.name, version: userInputReleaseVersion]
+          }
+        }
+
+        globalSettings.extendedMessageInfo += "Brand(s)/Core Version(s): ${userInputBrandCoreVersions}\n"
+        if (slackSettings.enableSlackNotification)
+        {
+          slackSend teamDomain: "${slackSettings.teamDomain}", botUser: slackSettings.isBotUser, tokenCredentialId: "${slackSettings.slackTokenID}", channel: "${slackSettings.slackChannel}", message: "${globalSettings.extendedMessageInfo}\n (<${env.RUN_DISPLAY_URL}|Open>)"
+        }
+      }
+      catch (Exception exception)
+      {
+        endMillis = System.currentTimeMillis()
+        if (endMillis - startMillis >= globalSettings.userInputTimeout)
+        {
+          error('error_input_timeout')
+        }
+
+        throw exception
+      }
+    }
+  }
+
+  stage('Clean & Init')
+  {
+    env.STAGE_NAME = 'Clean & Init'
+    node('master')
+    {
+      try
+      {
+        wrap([$class: 'BuildUser'])
+        {
+          env.userFullName = "${BUILD_USER}"
+        }
+      }
+      catch (Exception ex)
+      {
+        env.userFullName = "Jenkins"
+      }
+      if (slackSettings.enableSlackNotification)
+      {
+        slackSend teamDomain: "${slackSettings.teamDomain}", botUser: slackSettings.isBotUser, tokenCredentialId: "${slackSettings.slackTokenID}", channel: "${slackSettings.slackChannel}", message: "${env.JOB_NAME}: started by user: ${env.userFullName}\n (<${env.RUN_DISPLAY_URL}|Open>)"
+      }
+
+      //cleanup of docker slaves not needed anymore
+      ecxHelper.cleanUp()
+    }
+  }
+
+  stage('Prepare Azure')
+  {
+    node ("${projectSettings.buildServerNode}")
+    {
+      withCredentials([azureServicePrincipal("${azureSettings.servicePrincipal.appService}")])
+      {
+        def status = azureUtils.azAppService.stopAppService("${azureSettings.appServices.CM}", "${azureSettings.resourceGroupName}", "$AZURE_CLIENT_ID", "$AZURE_CLIENT_SECRET", "$AZURE_TENANT_ID")
+        //status += azureUtils.azAppService.stopAppService("${azureSettings.appServices.CD}", "${azureSettings.resourceGroupName}", "$AZURE_CLIENT_ID", "$AZURE_CLIENT_SECRET", "$AZURE_TENANT_ID")
+        if (status != 0) {
+          throw new Exception()
+        }
+      }
+    }
+  }
+
+  stage('Deploy Zip to AppServices')
+  {
+    def status = 0
+    def zipdir = ''
+    parallel("CM":
+    {
+      node ("${projectSettings.buildServerNode}")
+      {
+        dir('pipeline')
+        {
+          git branch: "${gitSettings.pipelineGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+          load "tools.groovy"
+        }
+        dir('sourcecode')
+        {
+          git branch: "${gitSettings.defaultGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.defaultGitRepo}"
+          projectSettings.sourcecodeFolder = ecxHelper.getCurrentDirectory()
+        }
+
+        zipdir = ecxHelper.getCurrentDirectory()
+        brandcoreselection.each { brandOrCore ->
+          ecxHelper.nexusRetrieve("${nexusSettings.nexusBaseUrl}${nexusSettings.repositoryUrl}", "${nexusSettings.nexusGroupID}", "${brandOrCore.artifactId}", "${brandOrCore.version}", "${zipdir}", "zip")
+        }
+        def tempUnzipFolder = ''
+        dir('unzippedfiles')
+        {
+          tempUnzipFolder = ecxHelper.getCurrentDirectory()
+        }
+        dir("${projectSettings.baselineFolderCM}")
+        {
+          fileOperations([fileCopyOperation(excludes: "*.zip", includes: "**/**", targetLocation: "${tempUnzipFolder}")])
+        }
+        brandcoreselection.each { brandOrCore ->
+          unzip dir: "${tempUnzipFolder}", glob: "", zipFile: "${zipdir}/${brandOrCore.artifactId}-${brandOrCore.version}.zip"
+        }
+        dir("${projectSettings.sourcecodeFolder}\\${projectSettings.configFolderCM}")
+        {
+          fileOperations([fileCopyOperation(excludes: "", includes: "**/**", targetLocation: "${tempUnzipFolder}")])
+        }
+        dir("${tempUnzipFolder}")
+        {
+          zip dir: "", glob: "", zipFile: "${zipdir}/${azureSettings.appServices.CM}.zip"
+        }
+        stash includes: "${azureSettings.appServices.CM}.zip", name: "stashCMZipFile"
+      }
+    },
+    "CD":
+    {
+      node ("${projectSettings.buildServerNode}")
+      {
+      }
+    })
+
+    node("BUILD DEV")
+    {
+      unstash "stashCMZipFile"
+      status += azureUtils.webDeployViaMsDeployTest("D:\\Deployment\\test", "D:\\home\\site\\wwwroot\\test", "${msbuildSettings.msdeployPath}", "${azureSettings.publishSettings.CM}")
+      status += azureUtils.webDeployViaMsDeploy("${ecxHelper.getCurrentDirectory()}", "${azureSettings.appServices.CM}.zip", "${msbuildSettings.msdeployPath}", "${azureSettings.publishSettings.CM}")
+      if (status != 0) {
+        throw new Exception()
+      }
+    }
+
+    node ("${projectSettings.buildServerNode}")
+    {
+      withCredentials([azureServicePrincipal("${azureSettings.servicePrincipal.appService}")])
+      {
+        azureUtils.azAppService.startAppService("${azureSettings.appServices.CM}", "${azureSettings.resourceGroupName}", "$AZURE_CLIENT_ID", "$AZURE_CLIENT_SECRET", "$AZURE_TENANT_ID")
+        //azureUtils.appService.startAppService("${azureSettings.appServices.CD}", "${azureSettings.resourceGroupName}", "$AZURE_CLIENT_ID", "$AZURE_CLIENT_SECRET", "$AZURE_TENANT_ID")
+      }
+    }
+  }
+}
+catch (Exception exception)
+{
+  errorMessage = exception.getMessage()
+  errorMessage = "${slackSettings.errorRecipients}\n${errorMessage}"
+  errors.defaultHandler(exception, slackSettings)
+}
+finally
+{
+  stage('Finalisation')
+  {
+    ecxHelper.defaultFinalisation(nodeNames, errorMessage, slackSettings)
+  }
+}

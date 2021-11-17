@@ -1,0 +1,1 @@
+env.toolMaven = tool name: 'maven360', type: 'maven'

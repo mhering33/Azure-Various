@@ -1,0 +1,98 @@
+def gitSettings = [ defaultGitUserCredID: 'git-user',
+                    defaultGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-cois-ui-tests.git',
+                    pipelineGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms-deploy.git']
+
+def slackSettings = [ enableSlackNotification: true,
+                      slackTokenID: 'slack-app-token',
+                      slackChannel: 'fiskars_jenkins',
+                      slackBaseURL: 'https://ibm-ecxio.slack.com/services/hooks/jenkins-ci/',
+                      teamDomain: 'ibm-ecxio',
+                      isBotUser: false,
+                      errorRecipients: '<@matija.popijac>']
+
+def projectSettings = [ sourcecodeFolder: '',
+                        configFolder: 'D:\\Deployment\\DEV\\uitests',
+						browserRemote: 'http://build-dus-fiskars-debian:4444/wd/hub'
+                        ]
+
+def lib = library('helper').io.ecx
+def ecxHelper = lib.ECXHelperWindows.new(this)
+def errors = lib.errors.ErrorHandler.new(this)
+def errorMessage = ''
+def nodeNames = ["master"]
+def buildEnvironmentName = 'whatever'
+
+try
+{
+	stage('UI Tests')
+	{
+		env.STAGE_NAME = 'UI Tests'
+		node('master')
+		{
+			try
+			{
+				wrap([$class: 'BuildUser'])
+				{
+					env.userFullName = "${BUILD_USER}"
+				}
+			}
+			catch (Exception ex)
+			{
+				env.userFullName = "Jenkins"
+			}
+			if (slackSettings.enableSlackNotification)
+			{
+            	slackSend baseUrl: "${slackSettings.slackBaseURL}", teamDomain: "${slackSettings.teamDomain}", botUser: slackSettings.isBotUser, tokenCredentialId: "${slackSettings.slackTokenID}", channel: "${slackSettings.slackChannel}", message: "Started ${env.JOB_NAME} ${env.BUILD_DISPLAY_NAME} by ${env.userFullName}"
+			}
+
+			ecxHelper.cleanUp()
+			dir('pipeline')
+			{
+				git branch: "master", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+				load "tools.groovy"
+			}
+			dir('sourcecode')
+			{
+				git branch: "master", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.defaultGitRepo}"
+				projectSettings.sourcecodeFolder = ecxHelper.getCurrentDirectory()
+			}
+			dir('sourcecode')
+			{
+				retry(3){
+					try{
+						if(params.springProfile != null && params.testFeature != null && params.springProfile != "" && params.testFeature != "")
+						{
+							ecxHelper.mavenCommand("-s settings.xml clean compile test -Dconfig.browser.remote=${projectSettings.browserRemote} -Dspring.profiles.active=${params.springProfile} \"-Dcucumber.options=--tags @${params.testFeature}\"")
+						}
+						else if(params.springProfile != null && params.springProfile != "")
+						{
+							ecxHelper.mavenCommand("-s settings.xml clean compile test -Dconfig.browser.remote=${projectSettings.browserRemote} -Dspring.profiles.active=${params.springProfile}")
+						}
+								else
+						{
+							ecxHelper.mavenCommand("-s settings.xml clean compile test -Dconfig.browser.remote=${projectSettings.browserRemote}")
+						}
+						junit 'target/surefire-reports/*.xml'
+						cucumber fileIncludePattern: 'target/cucumber-reports/CucumberTestReport.json', sortingMethod: 'ALPHABETICAL'
+					}catch(Exception exception){
+						sleep time: 3, unit: 'MINUTES'
+						throw exception
+					}
+				}
+			}
+		}
+	}
+}
+catch (Exception exception)
+{
+	errorMessage = exception.getMessage()
+	errorMessage = "${slackSettings.errorRecipients}\n${errorMessage}"
+	errors.defaultHandler(exception, slackSettings)
+}
+finally
+{
+	stage('Finalisation')
+	{
+		ecxHelper.defaultFinalisation(nodeNames, errorMessage, slackSettings)
+	}
+}

@@ -1,0 +1,101 @@
+#!groovy
+def gitSettings = [ defaultGitUserCredID: 'git-user',
+                    defaultGitBranch: 'develop',
+                    defaultGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms.git',
+                    pipelineGitRepo: 'https://stash.ecx.io/scm/fiskars/fiskars-onedigital-core-cms-deploy.git']
+def slackSettings = [ enableSlackNotification: true,
+                      slackTokenID: 'slacktoken_Fiskars',
+                      slackChannel: 'fiskars_jenkins',
+                      slackBaseURL: 'https://ibm-ecxio.slack.com/services/hooks/jenkins-ci/',
+                      teamDomain: 'ibm-ecxio',
+                      isBotUser: false,
+                      errorRecipients: '<@christian.schimanski><@silvio.papac>']
+
+def projectSettings = [ sourcecodeFolder: '']
+
+def lib = library('helper').io.ecx
+def ecxHelper = lib.ECXHelperWindows.new(this)
+def errors = lib.errors.ErrorHandler.new(this)
+def errorMessage = ''
+def jsonData = ''
+def nodeNames = ["master"]
+
+try
+{
+  stage('Clean & Init')
+  {
+    env.STAGE_NAME = 'Clean & Init'
+    node('master')
+    {
+      try
+      {
+        wrap([$class: 'BuildUser'])
+        {
+          env.userFullName = "${BUILD_USER}"
+        }
+      }
+      catch (Exception ex)
+      {
+        env.userFullName = "Jenkins"
+      }
+      if (slackSettings.enableSlackNotification)
+      {
+        slackSend teamDomain: "${slackSettings.teamDomain}", botUser: slackSettings.isBotUser, tokenCredentialId: "${slackSettings.slackTokenID}", channel: "${slackSettings.slackChannel}", message: "${env.JOB_NAME}: started by user: ${env.userFullName}\n (<${env.RUN_DISPLAY_URL}|Open>)"
+      }
+
+      ecxHelper.cleanUp()
+      dir('pipeline')
+      {
+        git branch: "master", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.pipelineGitRepo}"
+        load "tools.groovy"
+      }
+      dir('sourcecode')
+      {
+        git branch: "${gitSettings.defaultGitBranch}", credentialsId: "${gitSettings.defaultGitUserCredID}", url: "${gitSettings.defaultGitRepo}"
+        projectSettings.sourcecodeFolder = ecxHelper.getCurrentDirectory()
+        jsonData = readJSON file: "sc/src/Project/Core/build-config.json"
+      }
+    }
+  }
+
+  stage('Build')
+  {
+    env.STAGE_NAME = 'Build'
+    node("master")
+    {
+      dir("${projectSettings.sourcecodeFolder}/sc")
+      {
+        ecxHelper.mavenCommand("clean test -P htmlpreview")
+      }
+      dir("${projectSettings.sourcecodeFolder}/sc/htmldummy")
+      {
+        stash includes: "**/**", name: 'stash_templates'
+      }
+    }
+  }
+
+  stage('Copy Files')
+  {
+    env.STAGE_NAME = 'Copy Files'
+    node("master")
+    {
+      dir('/var/www/html/Core')
+      {
+        unstash 'stash_templates'
+      }
+    }
+  }
+}
+catch (Exception exception)
+{
+  errorMessage = exception.getMessage()
+  errorMessage = "${slackSettings.errorRecipients}\n${errorMessage}"
+  errors.defaultHandler(exception, slackSettings)
+}
+finally
+{
+  stage('Finalisation')
+  {
+    ecxHelper.defaultFinalisation(nodeNames, errorMessage, slackSettings)
+  }
+}
