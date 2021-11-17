@@ -1,0 +1,30 @@
+The tenant ID of the service provider's tenant (where you will be managing the customer's resources)
+
+c7e3b356-2a2f-403b-ac24-427daf53e8f4
+
+The tenant ID of the customer's tenant (which will have resources managed by the service provider)
+
+833f5466-d118-4b8a-be33-718ad24756c6
+
+The subscription IDs for each specific subscription in the customer's tenant that will be managed by the service provider 
+(or that contains the resource group(s) that will be managed by the service provider)
+
+bc4b94af-95e0-4a6d-b0d6-56368f4634ec
+
+
+
+I need to gather a bit of information:
+
+mspName: The name of the managed services provider. Note that this is a label.
+	ECXio Operations
+mspOfferDescription: The name of the service being offered.
+	Tier1 Support by ECXio Operations
+managedByTenantId: The Directory ID of the managed services provider (Azure Portal > Azure Active Directory > Properties > Directory ID)
+	c7e3b356-2a2f-403b-ac24-427daf53e8f4  #ecxio directory id
+Authorizations: A description of each entity (user/group/service principal) from the MSP tenant being granted access to the customer deployment
+principalId: The ID of the user, group, or service principal. Remember – groups are best!
+	d5a9ccc0-6027-4c2c-b654-a6be534e3b92  #id grupe koja bude imala pristup
+principalIdDisplayName: A label for the current principal – what you want to describe this principal as for your customer to see
+	ECXio Support  #ono sto klijent vidi kod sebe kad delegira resurs
+roleDefinitionId: The GUID of the role that will grant permissions to the principal, e.g. Contributor. PowerShell > (Get-AzRoleDefinition -Name ‘<roleName>’).id
+	b24988ac-6180-42a0-ab88-20f7382dd24c

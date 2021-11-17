@@ -1,0 +1,24 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "mspOfferName": {
+            "value": "ECXio Operations"
+        },
+        "mspOfferDescription": {
+            "value": "Tier1 Support by ECXio Operations"
+        },
+        "managedByTenantId": {
+            "value": "c7e3b356-2a2f-403b-ac24-427daf53e8f4"
+        },
+        "authorizations": {
+            "value": [
+                {
+                    "principalId": "d5a9ccc0-6027-4c2c-b654-a6be534e3b92",
+                    "principalIdDisplayName": "ECXio support",
+                    "roleDefinitionId": "b24988ac-6180-42a0-ab88-20f7382dd24c"
+                }               
+            ]
+        }
+    }
+}
