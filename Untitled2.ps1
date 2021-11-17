@@ -1,0 +1,1 @@
+﻿Invoke-WebRequest -Uri "https://sitecoresmh.blob.core.windows.net/satoolkit/AzureToolkit/SitecoreAzureToolkit-210.zip" -OutFile "c:\temp\SitecoreAzureToolkit-210.zip"

@@ -1,0 +1,89 @@
+﻿
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "vaultName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the Recovery Services Vault"
+      }
+    },
+    "policyName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the Backup Policy"
+      }
+    },
+    "scheduleRunFrequency": {
+      "type": "string",
+      "metadata": {
+        "description": "Daily, Weekly"
+      }   
+    },
+    "scheduleRunTimes": {
+      "type": "array",
+      "metadata": {
+        "description": "Times in day when backup should be triggered. e.g. 01:00, 13:00 [2018-06-01T01:00:00Z]. This will be used in LTR too for daily, weekly, monthly and yearly backup."
+      }
+    },
+    "timeZone": {
+      "type": "string",
+      "metadata": {
+        "description": "Any Valid timezone, for example:UTC, Pacific Standard Time. Refer: https://msdn.microsoft.com/en-us/library/gg154758.aspx"
+      }
+    },
+    "dailyRetentionDurationCount": {
+      "type": "int",
+      "metadata": {
+        "description": "Number of days you want to retain the backup"
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Location for all resources."
+      }
+    }
+  },
+  "resources": [
+    {
+      "apiVersion": "2016-12-01",
+      "name": "[concat(parameters('vaultName'), '/', parameters('policyName'))]",
+      "type": "Microsoft.RecoveryServices/vaults/backupPolicies",
+      "location": "[parameters('location')]",
+      "tags": null,
+      "dependsOn": [
+        "[concat('Microsoft.RecoveryServices/vaults/', parameters('vaultName'))]"
+      ],
+      "properties": {
+        "backupManagementType": "AzureIaasVM",
+        "retentionPolicy": {
+          "dailySchedule": {
+            "retentionDuration": {
+              "count": 30,
+              "durationType": "Days"
+            },
+            "retentionTimes": [
+              "2018-06-07T01:00:00+00:00"
+            ]
+          },
+          "retentionPolicyType": "LongTermRetentionPolicy",
+          "weeklySchedule": null,
+          "monthlySchedule": null,
+          "yearlySchedule": null
+        },
+        "schedulePolicy": {
+          "schedulePolicyType": "SimpleSchedulePolicy",
+          "scheduleRunDays": null,
+          "scheduleRunFrequency": "Daily",
+          "scheduleRunTimes": [
+            "2018-06-07T01:00:00Z"
+          ],
+          "scheduleWeeklyFrequency": 0
+        },
+        "timeZone": "[parameters('timeZone')]"
+      }
+    }
+  ]
+}

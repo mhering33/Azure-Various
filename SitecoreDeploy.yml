@@ -1,0 +1,10 @@
+steps:
+- task: PublishBuildArtifacts@1
+  displayName: 'Publish Artifact sc-inf-pack2'
+  inputs:
+    PathtoPublish: 'Sitecore-SCI/Sitecore 9.3.0/XPSingle'
+    ArtifactName: 'sc-inf-pack2'
+
+steps:
+- powershell: 'Invoke-WebRequest -Uri "https://sitecorepackages1.blob.core.windows.net/sitecore/AzureToolkit/Sitecore Azure Toolkit 2.1.0 rev. 18023.zip" -OutFile "$(System.DefaultWorkingDirectory)\Sitecore Azure Toolkit 2.1.0 rev. 181023.zip"'
+  displayName: 'PowerShell Script'
